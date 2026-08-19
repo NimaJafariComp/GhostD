@@ -13,6 +13,11 @@ import type {
   MaterializationStatus,
   WorkspaceSnapshot,
 } from '../core/graph.js';
+import type {
+  CompleteMaterializationRun,
+  MaterializationRun,
+  StartMaterializationRun,
+} from '../core/materialization.js';
 import { redactEvent } from '../privacy/redaction.js';
 
 export interface StoredEvent extends GhostEvent {
@@ -79,6 +84,28 @@ interface MaterializationRow {
   synchronized_revision_id: string;
   created_at: string;
   updated_at: string;
+}
+
+interface MaterializationRunRow {
+  id: string;
+  branch_id: string;
+  provider: string;
+  model: string;
+  source_revision_id: string;
+  mode: MaterializationRun['mode'];
+  strategy: MaterializationRun['strategy'];
+  status: MaterializationRun['status'];
+  materialization_id: string | null;
+  provider_handle: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_cost_usd: number | null;
+  latency_ms: number | null;
+  response_text: string | null;
+  recovery: string;
+  failure_code: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 
 interface EventCheckpointRow {
@@ -168,15 +195,19 @@ export class GhostDatabase {
   }
 
   public eventsForSession(sessionId: string): StoredEvent[] {
+    return this.eventsForSessionThrough(sessionId);
+  }
+
+  public eventsForSessionThrough(sessionId: string, eventHighWaterMark?: number): StoredEvent[] {
     const rows = this.database
       .prepare(
         `SELECT id, session_id, sequence, schema_version, timestamp, source, type, trust_class, payload_json,
                 workspace_cwd, git_head, git_status
          FROM events
-         WHERE session_id = ?
+         WHERE session_id = ? ${eventHighWaterMark === undefined ? '' : 'AND sequence <= ?'}
          ORDER BY sequence ASC`,
       )
-      .all(sessionId) as unknown as EventRow[];
+      .all(...(eventHighWaterMark === undefined ? [sessionId] : [sessionId, eventHighWaterMark])) as unknown as EventRow[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -435,6 +466,130 @@ export class GhostDatabase {
     };
   }
 
+  public startMaterializationRun(input: StartMaterializationRun): MaterializationRun {
+    const branch = this.branchById(input.branchId);
+    if (branch === undefined) {
+      throw new Error(`Branch ${input.branchId} does not exist.`);
+    }
+    if (branch.lifecycle !== 'open') {
+      throw new Error(`Branch ${branch.name} is closed.`);
+    }
+    if (!this.isRevisionAncestor(input.sourceRevisionId, branch.headRevisionId)) {
+      throw new Error(`Revision ${input.sourceRevisionId} is not reachable from branch ${branch.name}.`);
+    }
+    const run: MaterializationRun = {
+      id: randomUUID(),
+      ...input,
+      status: 'running',
+      recovery: 'Ghost retains the source revision; retrying does not require provider session state.',
+    };
+    this.database
+      .prepare(
+        `INSERT INTO materialization_runs (
+           id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+           provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
+           completed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL)`,
+      )
+      .run(
+        run.id,
+        run.branchId,
+        run.provider,
+        run.model,
+        run.sourceRevisionId,
+        run.mode,
+        run.strategy,
+        run.status,
+        run.recovery,
+        run.createdAt,
+      );
+    return run;
+  }
+
+  public completeMaterializationRun(id: string, outcome: CompleteMaterializationRun): MaterializationRun {
+    const run = this.materializationRun(id);
+    if (run === undefined) {
+      throw new Error(`Materialization run ${id} does not exist.`);
+    }
+    if (run.status !== 'running') {
+      throw new Error(`Materialization run ${id} is already ${run.status}.`);
+    }
+    this.database
+      .prepare(
+        `UPDATE materialization_runs
+         SET status = ?, materialization_id = ?, provider_handle = ?, input_tokens = ?, output_tokens = ?,
+             estimated_cost_usd = ?, latency_ms = ?, response_text = ?, completed_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        'succeeded',
+        outcome.materializationId,
+        outcome.providerHandle ?? null,
+        outcome.inputTokens ?? null,
+        outcome.outputTokens ?? null,
+        outcome.estimatedCostUsd ?? null,
+        outcome.latencyMs,
+        outcome.responseText,
+        outcome.completedAt,
+        id,
+      );
+    return {
+      ...run,
+      status: 'succeeded',
+      materializationId: outcome.materializationId,
+      ...(outcome.providerHandle === undefined ? {} : { providerHandle: outcome.providerHandle }),
+      ...(outcome.inputTokens === undefined ? {} : { inputTokens: outcome.inputTokens }),
+      ...(outcome.outputTokens === undefined ? {} : { outputTokens: outcome.outputTokens }),
+      ...(outcome.estimatedCostUsd === undefined ? {} : { estimatedCostUsd: outcome.estimatedCostUsd }),
+      latencyMs: outcome.latencyMs,
+      responseText: outcome.responseText,
+      completedAt: outcome.completedAt,
+    };
+  }
+
+  public failMaterializationRun(id: string, failureCode: string, completedAt: string, latencyMs?: number): MaterializationRun {
+    const run = this.materializationRun(id);
+    if (run === undefined) {
+      throw new Error(`Materialization run ${id} does not exist.`);
+    }
+    if (run.status !== 'running') {
+      throw new Error(`Materialization run ${id} is already ${run.status}.`);
+    }
+    const recovery = 'Ghost retained the source revision and workspace snapshot; retry the same ask when the provider is available.';
+    this.database
+      .prepare('UPDATE materialization_runs SET status = ?, recovery = ?, failure_code = ?, latency_ms = ?, completed_at = ? WHERE id = ?')
+      .run('failed', recovery, failureCode, latencyMs ?? null, completedAt, id);
+    return { ...run, status: 'failed', recovery, failureCode, ...(latencyMs === undefined ? {} : { latencyMs }), completedAt };
+  }
+
+  public materializationRun(id: string): MaterializationRun | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+                provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
+                completed_at
+         FROM materialization_runs WHERE id = ?`,
+      )
+      .get(id) as MaterializationRunRow | undefined;
+    return row === undefined ? undefined : materializationRunFromRow(row);
+  }
+
+  public latestMaterializationRun(branchName: string): MaterializationRun | undefined {
+    const branch = this.branch(branchName);
+    if (branch === undefined) {
+      return undefined;
+    }
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+                provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
+                completed_at
+         FROM materialization_runs WHERE branch_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(branch.id) as MaterializationRunRow | undefined;
+    return row === undefined ? undefined : materializationRunFromRow(row);
+  }
+
   /** Returns true when the first revision is equal to or an ancestor of the second revision. */
   public isRevisionAncestor(ancestorRevisionId: string, descendantRevisionId: string): boolean {
     const row = this.database
@@ -449,6 +604,17 @@ export class GhostDatabase {
       )
       .get(descendantRevisionId, ancestorRevisionId) as { is_ancestor: number };
     return row.is_ancestor === 1;
+  }
+
+  private branchById(id: string): GhostBranch | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, name, persistence, lifecycle, base_revision_id, head_revision_id, tracking_revision_id,
+                originating_session_id, created_at, closed_at
+         FROM branches WHERE id = ?`,
+      )
+      .get(id) as BranchRow | undefined;
+    return row === undefined ? undefined : branchFromRow(row);
   }
 
   private migrate(): void {
@@ -526,6 +692,31 @@ export class GhostDatabase {
 
       CREATE INDEX IF NOT EXISTS branch_materializations_branch_created
       ON branch_materializations(branch_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS materialization_runs (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        source_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        mode TEXT NOT NULL CHECK (mode IN ('ephemeral', 'persistent')),
+        strategy TEXT NOT NULL CHECK (strategy IN ('native_fork', 'session_resume', 'context_replay')),
+        status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+        materialization_id TEXT REFERENCES branch_materializations(id) ON DELETE RESTRICT,
+        provider_handle TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        estimated_cost_usd REAL,
+        latency_ms INTEGER,
+        response_text TEXT,
+        recovery TEXT NOT NULL,
+        failure_code TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS materialization_runs_branch_created
+      ON materialization_runs(branch_id, created_at);
     `);
 
     const eventColumns = this.database.prepare('PRAGMA table_info(events)').all() as unknown as ColumnRow[];
@@ -534,6 +725,13 @@ export class GhostDatabase {
     }
     if (!eventColumns.some(({ name }) => name === 'trust_class')) {
       this.database.exec('ALTER TABLE events ADD COLUMN trust_class TEXT');
+    }
+    const materializationRunColumns = this.database.prepare('PRAGMA table_info(materialization_runs)').all() as unknown as ColumnRow[];
+    if (!materializationRunColumns.some(({ name }) => name === 'response_text')) {
+      this.database.exec('ALTER TABLE materialization_runs ADD COLUMN response_text TEXT');
+    }
+    if (!materializationRunColumns.some(({ name }) => name === 'latency_ms')) {
+      this.database.exec('ALTER TABLE materialization_runs ADD COLUMN latency_ms INTEGER');
     }
   }
 }
@@ -596,5 +794,29 @@ function materializationFromRow(row: MaterializationRow): BranchMaterialization 
     synchronizedRevisionId: row.synchronized_revision_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function materializationRunFromRow(row: MaterializationRunRow): MaterializationRun {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    provider: row.provider,
+    model: row.model,
+    sourceRevisionId: row.source_revision_id,
+    mode: row.mode,
+    strategy: row.strategy,
+    status: row.status,
+    ...(row.materialization_id === null ? {} : { materializationId: row.materialization_id }),
+    ...(row.provider_handle === null ? {} : { providerHandle: row.provider_handle }),
+    ...(row.input_tokens === null ? {} : { inputTokens: row.input_tokens }),
+    ...(row.output_tokens === null ? {} : { outputTokens: row.output_tokens }),
+    ...(row.estimated_cost_usd === null ? {} : { estimatedCostUsd: row.estimated_cost_usd }),
+    ...(row.latency_ms === null ? {} : { latencyMs: row.latency_ms }),
+    ...(row.response_text === null ? {} : { responseText: row.response_text }),
+    recovery: row.recovery,
+    ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
+    createdAt: row.created_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
   };
 }

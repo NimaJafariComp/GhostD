@@ -55,15 +55,15 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 2 — Lazy materialization and target adapters
 
-**Status:** Not started
+**Status:** Implementation complete — live Claude evaluation requires a user-configured `ANTHROPIC_API_KEY`.
 
-- [ ] Add capability metadata for native forks, session resume, cache scope/lifetime, context limits, workspace/tool access, and write access.
-- [ ] Implement pluggable materialization strategies that choose fidelity, cost, and latency rather than a fixed provider-specific branch.
-- [ ] Add a read-only Claude target adapter and `ghost ask claude "…"`.
-- [ ] Define `ghost ask <agent> "…"` as ephemeral and `ghost ask <branch> "…"` as persistent.
-- [ ] Store provider handles separately from canonical Ghost branches.
-- [ ] Record materialization decisions, source revision, token cost, and provider-failure recovery details.
-- [ ] Run context-fidelity and token/latency evaluations.
+- [x] Add capability metadata for native forks, session resume, cache scope/lifetime, context limits, workspace/tool access, and write access.
+- [x] Implement pluggable materialization strategies that choose fidelity, cost, and latency rather than a fixed provider-specific branch.
+- [x] Add a read-only Claude target adapter and `ghost ask claude "…"`.
+- [x] Define `ghost ask <agent> "…"` as ephemeral and `ghost ask <branch> "…"` as persistent.
+- [x] Store provider handles separately from canonical Ghost branches.
+- [x] Record materialization decisions, source revision, token counts, configured cost, latency, redacted answer text, and provider-failure recovery details.
+- [x] Run deterministic context-pinning and token/latency evaluations with mocked provider responses; a live provider evaluation remains pending `ANTHROPIC_API_KEY` and is not simulated.
 
 ## Phase 3 — Synchronization and temporal context
 

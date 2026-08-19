@@ -47,6 +47,15 @@ function redactString(value: string, policy: RedactionPolicy): RedactionResult<s
   return { value: redacted, redacted: redacted !== value };
 }
 
+/** Redacts text before it leaves Ghost for a provider; source events remain unchanged. */
+export function redactText(
+  value: string,
+  scope: RedactionScope,
+  policy: RedactionPolicy = defaultRedactionPolicies[scope],
+): RedactionResult<string> {
+  return redactString(value, policy);
+}
+
 function redactUnknown(value: unknown, policy: RedactionPolicy, inheritedSensitive: boolean): RedactionResult<unknown> {
   if (typeof value === 'string') {
     if (inheritedSensitive && policy.redactSensitiveFields) {

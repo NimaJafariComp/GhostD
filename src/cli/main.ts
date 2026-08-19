@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,6 +11,7 @@ import { hookCommand, installCodexHooks } from '../adapters/codex/setup.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
+import { MaterializationService } from '../materialization/service.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
@@ -22,6 +24,9 @@ function usage(): string {
                             Render a deterministic context handoff.
   ghost branch <name>       Create a cold logical branch from the latest session checkpoint.
   ghost branch close <name> Close a branch while preserving its history.
+  ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
+  ghost ask <branch> <prompt>
+                            Ask Claude from a persistent Ghost branch.
   ghost setup                Initialize local storage and the project Codex adapter.
   ghost codex-hook           Receive a Codex hook event on standard input.`;
 }
@@ -111,6 +116,42 @@ async function branch(arguments_: string[]): Promise<void> {
   }
 }
 
+async function ask(arguments_: string[]): Promise<void> {
+  const target = arguments_.at(0);
+  const prompt = arguments_.slice(1).join(' ').trim();
+  if (target === undefined || prompt.length === 0) {
+    throw new Error('Usage: ghost ask <claude|branch> <prompt>.');
+  }
+
+  const database = await GhostDatabase.open(databasePath());
+  let ephemeralBranchName: string | undefined;
+  try {
+    let branchName = target;
+    let mode: 'ephemeral' | 'persistent' = 'persistent';
+    if (target === 'claude') {
+      const sessionId = database.latestSessionId();
+      if (sessionId === undefined) {
+        throw new Error('No sessions have been captured. Run ghost ingest first.');
+      }
+      const revision = database.createRevision(sessionId);
+      ephemeralBranchName = `ask-${randomUUID()}`;
+      database.createBranch(ephemeralBranchName, revision.id, 'ephemeral');
+      branchName = ephemeralBranchName;
+      mode = 'ephemeral';
+    } else if (database.branch(branchName) === undefined) {
+      throw new Error(`Unknown target ${target}. Use claude or an existing branch name.`);
+    }
+
+    const result = await new MaterializationService(database).askClaude({ branchName, prompt, mode });
+    output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
+  } finally {
+    if (ephemeralBranchName !== undefined) {
+      database.closeBranch(ephemeralBranchName);
+    }
+    database.close();
+  }
+}
+
 async function codexHook(): Promise<void> {
   const contents = await readIngestInput(undefined);
   let rawEvent: unknown;
@@ -152,6 +193,9 @@ async function main(): Promise<void> {
       return;
     case 'branch':
       await branch(arguments_);
+      return;
+    case 'ask':
+      await ask(arguments_);
       return;
     case 'setup':
       await setup();

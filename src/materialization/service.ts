@@ -1,0 +1,159 @@
+import { ClaudeApiError, ClaudeTargetAdapter } from '../adapters/claude/target.js';
+import { chooseMaterializationStrategy } from '../adapters/targets.js';
+import { compileContext, renderContext } from '../context/compiler.js';
+import type { GhostBranch, GhostRevision, WorkspaceSnapshot } from '../core/graph.js';
+import type { MaterializationMode, MaterializationRun } from '../core/materialization.js';
+import { GhostDatabase } from '../db/database.js';
+import { redactText } from '../privacy/redaction.js';
+
+export interface AskClaudeInput {
+  branchName: string;
+  prompt: string;
+  mode: MaterializationMode;
+}
+
+export interface AskClaudeResult {
+  text: string;
+  revision: GhostRevision;
+  snapshot: WorkspaceSnapshot;
+  run: MaterializationRun;
+}
+
+export class MaterializationFailureError extends Error {
+  public constructor(public readonly run: MaterializationRun) {
+    super(`Claude materialization failed (${run.failureCode ?? 'provider_error'}). ${run.recovery}`);
+  }
+}
+
+export class MaterializationService {
+  public constructor(
+    private readonly database: GhostDatabase,
+    private readonly claude: ClaudeTargetAdapter = new ClaudeTargetAdapter(),
+    private readonly now: () => string = () => new Date().toISOString(),
+    private readonly clock: () => number = () => Date.now(),
+  ) {}
+
+  public async askClaude(input: AskClaudeInput): Promise<AskClaudeResult> {
+    if (input.prompt.trim().length === 0) {
+      throw new Error('An ask prompt is required.');
+    }
+    const branch = requiredBranch(this.database, input.branchName);
+    const revision = requiredRevision(this.database, branch.headRevisionId);
+    const snapshot = requiredSnapshot(this.database, revision.workspaceSnapshotId);
+    const context = renderContext(
+      compileContext(this.database.eventsForSessionThrough(revision.sessionId, revision.eventHighWaterMark)),
+      true,
+    );
+    const strategy = chooseMaterializationStrategy(this.claude.capabilities);
+    const startedAt = this.now();
+    const run = this.database.startMaterializationRun({
+      branchId: branch.id,
+      provider: this.claude.capabilities.provider,
+      model: this.claude.model,
+      sourceRevisionId: revision.id,
+      mode: input.mode,
+      strategy,
+      createdAt: startedAt,
+    });
+
+    const startedAtMs = this.clock();
+    try {
+      const remoteContext = redactText(context, 'remote').value;
+      const remotePrompt = redactText(input.prompt, 'remote').value;
+      const result = await this.claude.ask({
+        system: systemPrompt(revision, snapshot),
+        prompt: `${remoteContext}\n\nUSER ASK\n${remotePrompt}`,
+      });
+      const latencyMs = Math.max(0, this.clock() - startedAtMs);
+      const materialization = this.database.recordMaterialization(
+        branch.name,
+        this.claude.capabilities.provider,
+        revision.id,
+        result.providerHandle,
+        this.now(),
+      );
+      const cost = estimatedCost(result.inputTokens, result.outputTokens);
+      const completed = this.database.completeMaterializationRun(run.id, {
+        materializationId: materialization.id,
+        providerHandle: result.providerHandle,
+        ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
+        ...(result.outputTokens === undefined ? {} : { outputTokens: result.outputTokens }),
+        ...(cost === undefined ? {} : { estimatedCostUsd: cost }),
+        latencyMs,
+        responseText: redactText(result.text, 'storage').value,
+        completedAt: this.now(),
+      });
+      return { text: result.text, revision, snapshot, run: completed };
+    } catch (error: unknown) {
+      const failed = this.database.failMaterializationRun(
+        run.id,
+        failureCode(error),
+        this.now(),
+        Math.max(0, this.clock() - startedAtMs),
+      );
+      throw new MaterializationFailureError(failed);
+    }
+  }
+}
+
+function systemPrompt(revision: GhostRevision, snapshot: WorkspaceSnapshot): string {
+  return [
+    'You are GhostD\'s read-only Claude target.',
+    'Answer only from the supplied Ghost context and the user ask. Do not assume hidden provider state.',
+    'You have no tools, workspace access, or authority to modify files, Git state, or Ghost history.',
+    `Ghost revision: ${revision.id}`,
+    `Workspace snapshot: ${snapshot.id}`,
+  ].join('\n');
+}
+
+function requiredBranch(database: GhostDatabase, name: string): GhostBranch {
+  const branch = database.branch(name);
+  if (branch === undefined) {
+    throw new Error(`Branch ${name} does not exist.`);
+  }
+  return branch;
+}
+
+function requiredRevision(database: GhostDatabase, id: string): GhostRevision {
+  const revision = database.revision(id);
+  if (revision === undefined) {
+    throw new Error(`Revision ${id} does not exist.`);
+  }
+  return revision;
+}
+
+function requiredSnapshot(database: GhostDatabase, id: string): WorkspaceSnapshot {
+  const snapshot = database.workspaceSnapshot(id);
+  if (snapshot === undefined) {
+    throw new Error(`Workspace snapshot ${id} does not exist.`);
+  }
+  return snapshot;
+}
+
+function failureCode(error: unknown): string {
+  if (error instanceof ClaudeApiError) {
+    return `http_${error.status}`;
+  }
+  if (error instanceof Error && error.message === 'ANTHROPIC_API_KEY is required to ask Claude.') {
+    return 'missing_api_key';
+  }
+  return 'provider_error';
+}
+
+function estimatedCost(inputTokens: number | undefined, outputTokens: number | undefined): number | undefined {
+  const inputPrice = configuredPrice('GHOST_CLAUDE_INPUT_USD_PER_MILLION_TOKENS');
+  const outputPrice = configuredPrice('GHOST_CLAUDE_OUTPUT_USD_PER_MILLION_TOKENS');
+  if (inputTokens === undefined || outputTokens === undefined || inputPrice === undefined || outputPrice === undefined) {
+    return undefined;
+  }
+  return (inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000;
+}
+
+function configuredPrice(name: string): number | undefined {
+  const value = process.env[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
