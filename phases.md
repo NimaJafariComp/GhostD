@@ -17,7 +17,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 0 — Canonical capture and fidelity
 
-**Status:** In progress — implementation, automated verification, and the initial trusted live-Codex baseline are complete; the broader labeled suite remains.
+**Status:** Complete
 
 - [x] Create the TypeScript CLI foundation.
 - [x] Define the canonical, append-only `GhostEvent` format.
@@ -32,13 +32,12 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Add fixture-backed context-fidelity scoring.
 - [x] Define fidelity dimensions and an experimental 90% current-state target; obsolete-state and secret leakage have zero tolerance.
 - [x] Add the Codex hook installer and event normalizer.
-- [x] Test the installer, canonical normalization, provenance, storage redaction, and deterministic context compilation (10 automated tests).
-- [x] Verify trusted live Codex capture for session lifecycle, user objective, assistant response, workspace/Git snapshot, provenance, an observable tool failure, and a decision.
-- [ ] Capture and label the remaining real-session suite: changed requirements, large tool output, sensitive values, and a dirty tree with multiple modified files. Codex project trust remains user-controlled; the adapter does not and must not grant it.
+- [x] Test the installer, canonical normalization, provenance, storage redaction, deterministic context compilation, and unresolved-question recall (10 automated tests).
+- [x] Capture and label the trusted, live-Codex suite: simple implementation, changed requirements, an observable failed hypothesis, large tool output, sensitive values, a dirty tree with multiple modified files, and an unresolved question. Codex project trust remains user-controlled; the adapter does not and must not grant it.
 
 **Exit criterion:** A labeled real-session suite establishes a defensible current-state-fidelity baseline with no observed secret or obsolete-state leakage. Ghost can answer those questions from its deterministic, secret-safe artifact without consulting the original Codex session. The 90% target is experimental until the first real-session results establish a meaningful threshold.
 
-**Current evidence:** The shipped Codex hook format is validated against the installed Codex hook schema. Automated checks cover canonical context recall, constraints, decisions, modified files, failures, provenance, and secret redaction. A trusted live Codex run successfully captured the canonical lifecycle, objective, assistant response, deterministic Git snapshot, observable failure, decision, and event provenance. Silent tool failures are not inferred when Codex provides no result text; this is deliberate to avoid unsupported facts.
+**Current evidence:** The shipped Codex hook format is validated against the installed Codex hook schema. Automated checks cover canonical context recall, constraints, decisions, unresolved questions, modified files, failures, provenance, and secret redaction. Trusted live Codex runs captured the canonical lifecycle, assistant response, Git snapshots, decisions, an observable failure, changed requirements (with the current objective correctly superseding the prior objective), a 12,001-byte tool result, a redacted test credential, two dirty working-tree files, and an unresolved question. No secret or obsolete-state leakage was observed. Silent tool failures are not inferred when Codex provides no result text; this is deliberate to avoid unsupported facts.
 
 **Initial evaluation suite:** simple implementation; changed requirements; rejected hypothesis followed by a correct diagnosis; large tool output; sensitive data in tool or file output; and a dirty Git tree with multiple modified files.
 

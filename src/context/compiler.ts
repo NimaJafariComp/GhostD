@@ -26,6 +26,7 @@ export interface CompiledContext {
   currentObjective: ContextFact;
   userRequirements: ContextFact[];
   importantDecisions: ContextFact[];
+  unresolvedQuestions: ContextFact[];
   modifiedFiles: ContextFact[];
   recentFailures: ContextFact[];
   recentConversation: ContextFact[];
@@ -84,6 +85,10 @@ function isFailure(text: string): boolean {
   return /\b(fail(?:ed|ing)?|error|exception|panic|exit code [1-9]|flaky)\b/i.test(text);
 }
 
+function isUnresolvedQuestion(text: string): boolean {
+  return /\?|\b(unresolved|open question|remain(?:s)? open|need to decide)\b/i.test(text);
+}
+
 export function compileContext(events: StoredEvent[]): CompiledContext {
   const latest = events.at(-1);
   if (latest === undefined) {
@@ -122,6 +127,9 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
       : { value: objectiveCandidate.value, sources: [eventRef(objectiveCandidate.event)] };
   const requirements = facts([...userMessages, ...assistantMessages].filter(({ value }) => isRequirement(value)));
   const decisions = facts(assistantMessages.filter(({ value }) => isDecision(value)));
+  const unresolvedQuestions = facts(
+    [...userMessages, ...assistantMessages].filter(({ value }) => isUnresolvedQuestion(value)),
+  );
   const failures = facts(toolResults.filter(({ value }) => isFailure(value)));
   const recentConversation = recent(
     events
@@ -147,6 +155,7 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
     currentObjective: objective,
     userRequirements: recent(requirements, MAX_RECENT_MESSAGES),
     importantDecisions: recent(decisions, MAX_RECENT_DECISIONS),
+    unresolvedQuestions: recent(unresolvedQuestions, MAX_RECENT_MESSAGES),
     modifiedFiles: facts(changedFiles),
     recentFailures: recent(failures, MAX_RECENT_FAILURES),
     recentConversation,
@@ -190,6 +199,9 @@ export function renderContext(context: CompiledContext, includeProvenance = fals
     '',
     'IMPORTANT DECISIONS',
     ...formatList(context.importantDecisions, 'None captured.', includeProvenance),
+    '',
+    'UNRESOLVED QUESTIONS',
+    ...formatList(context.unresolvedQuestions, 'None captured.', includeProvenance),
     '',
     'MODIFIED FILES',
     ...formatList(context.modifiedFiles, 'None captured.', includeProvenance),

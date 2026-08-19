@@ -1,6 +1,12 @@
 import type { CompiledContext, ContextFact } from '../context/compiler.js';
 
-export type ContextFacet = 'currentObjective' | 'userRequirements' | 'importantDecisions' | 'modifiedFiles' | 'recentFailures';
+export type ContextFacet =
+  | 'currentObjective'
+  | 'userRequirements'
+  | 'importantDecisions'
+  | 'unresolvedQuestions'
+  | 'modifiedFiles'
+  | 'recentFailures';
 
 export const phaseZeroFidelityDimensions = [
   'objective_recall',
@@ -41,6 +47,8 @@ function valuesFor(context: CompiledContext, facet: ContextFacet): readonly Cont
       return context.userRequirements;
     case 'importantDecisions':
       return context.importantDecisions;
+    case 'unresolvedQuestions':
+      return context.unresolvedQuestions;
     case 'modifiedFiles':
       return context.modifiedFiles;
     case 'recentFailures':

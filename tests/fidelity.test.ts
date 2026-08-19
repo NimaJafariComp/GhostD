@@ -6,7 +6,7 @@ import { phaseZeroAcceptance, phaseZeroFidelityDimensions, scoreContextFidelity 
 import type { StoredEvent } from '../src/db/database.js';
 
 describe('fixture-backed context fidelity', () => {
-  it('recalls the current objective, constraint, decision, touched file, and failure', () => {
+  it('recalls the current objective, constraint, decision, unresolved question, touched file, and failure', () => {
     const adapter = new FixtureAdapter();
     const rawEvents = [
       {
@@ -35,8 +35,8 @@ describe('fixture-backed context fidelity', () => {
         sessionId: 'fixture-session',
         timestamp: '2026-08-19T12:02:00.000Z',
         source: 'fixture',
-        type: 'file_change',
-        payload: { path: 'src/auth/refresh.ts' },
+        type: 'assistant_message',
+        payload: { text: 'Which persistence backend should own Ghost history?' },
         workspace: { cwd: '/work/payments' },
       },
       {
@@ -44,6 +44,16 @@ describe('fixture-backed context fidelity', () => {
         id: 'fixture-4',
         sessionId: 'fixture-session',
         timestamp: '2026-08-19T12:03:00.000Z',
+        source: 'fixture',
+        type: 'file_change',
+        payload: { path: 'src/auth/refresh.ts' },
+        workspace: { cwd: '/work/payments' },
+      },
+      {
+        schemaVersion: 1,
+        id: 'fixture-5',
+        sessionId: 'fixture-session',
+        timestamp: '2026-08-19T12:04:00.000Z',
         source: 'fixture',
         type: 'tool_result',
         payload: { output: 'refresh_concurrency failed with exit code 1' },
@@ -56,12 +66,13 @@ describe('fixture-backed context fidelity', () => {
       { facet: 'currentObjective', expected: 'Fix refresh concurrency. Do not change the public API.' },
       { facet: 'userRequirements', expected: 'Fix refresh concurrency. Do not change the public API.' },
       { facet: 'importantDecisions', expected: 'We decided to serialize refreshes per session.' },
+      { facet: 'unresolvedQuestions', expected: 'Which persistence backend should own Ghost history?' },
       { facet: 'modifiedFiles', expected: 'src/auth/refresh.ts' },
       { facet: 'recentFailures', expected: 'refresh_concurrency failed with exit code 1' },
     ]);
 
     expect(adapter.name).toBe('fixture');
-    expect(score).toEqual({ total: 5, passed: 5, failures: [] });
+    expect(score).toEqual({ total: 6, passed: 6, failures: [] });
     expect(phaseZeroAcceptance.experimentalCurrentStateFidelityTarget).toBe(0.9);
     expect(phaseZeroAcceptance.zeroToleranceDimensions).toEqual(['obsolete_state_leakage', 'secret_leakage']);
     expect(phaseZeroFidelityDimensions).toContain('unresolved_question_recall');
