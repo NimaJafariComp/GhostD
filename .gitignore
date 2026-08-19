@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+.ghost/
+.codex/
+AGENTS.md
