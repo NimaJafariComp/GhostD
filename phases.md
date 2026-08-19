@@ -55,7 +55,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 2 — Lazy materialization and target adapters
 
-**Status:** Implementation complete — live Claude evaluation requires a user-configured `ANTHROPIC_API_KEY`.
+**Status:** Complete
 
 - [x] Add capability metadata for native forks, session resume, cache scope/lifetime, context limits, workspace/tool access, and write access.
 - [x] Implement pluggable materialization strategies that choose fidelity, cost, and latency rather than a fixed provider-specific branch.
@@ -63,7 +63,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Define `ghost ask <agent> "…"` as ephemeral and `ghost ask <branch> "…"` as persistent.
 - [x] Store provider handles separately from canonical Ghost branches.
 - [x] Record materialization decisions, source revision, token counts, configured cost, latency, redacted answer text, and provider-failure recovery details.
-- [x] Run deterministic context-pinning and token/latency evaluations with mocked provider responses; a live provider evaluation remains pending `ANTHROPIC_API_KEY` and is not simulated.
+- [x] Run deterministic context-pinning and token/latency evaluations with mocked provider responses, plus a user-run bounded live Claude materialization that returned a response with Ghost revision and workspace-snapshot attribution. No credential was stored in GhostD or this repository.
 
 ## Phase 3 — Synchronization and temporal context
 
