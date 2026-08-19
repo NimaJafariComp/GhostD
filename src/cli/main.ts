@@ -20,6 +20,8 @@ function usage(): string {
   ghost ingest [event-file]  Store newline-delimited canonical Ghost events.
   ghost context [session-id] [--provenance]
                             Render a deterministic context handoff.
+  ghost branch <name>       Create a cold logical branch from the latest session checkpoint.
+  ghost branch close <name> Close a branch while preserving its history.
   ghost setup                Initialize local storage and the project Codex adapter.
   ghost codex-hook           Receive a Codex hook event on standard input.`;
 }
@@ -80,6 +82,35 @@ async function context(arguments_: string[]): Promise<void> {
   }
 }
 
+async function branch(arguments_: string[]): Promise<void> {
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    if (arguments_.at(0) === 'close') {
+      const name = arguments_.at(1);
+      if (name === undefined || arguments_.length !== 2) {
+        throw new Error('Usage: ghost branch close <name>.');
+      }
+      const closed = database.closeBranch(name);
+      output.write(`Closed branch ${closed.name}; history remains available at revision ${closed.headRevisionId}.\n`);
+      return;
+    }
+
+    const name = arguments_.at(0);
+    if (name === undefined || arguments_.length !== 1) {
+      throw new Error('Usage: ghost branch <name>.');
+    }
+    const sessionId = database.latestSessionId();
+    if (sessionId === undefined) {
+      throw new Error('No sessions have been captured. Run ghost ingest first.');
+    }
+    const revision = database.createRevision(sessionId);
+    const created = database.createBranch(name, revision.id);
+    output.write(`Created cold branch ${created.name} at revision ${created.headRevisionId}.\n`);
+  } finally {
+    database.close();
+  }
+}
+
 async function codexHook(): Promise<void> {
   const contents = await readIngestInput(undefined);
   let rawEvent: unknown;
@@ -118,6 +149,9 @@ async function main(): Promise<void> {
       return;
     case 'context':
       await context(arguments_);
+      return;
+    case 'branch':
+      await branch(arguments_);
       return;
     case 'setup':
       await setup();

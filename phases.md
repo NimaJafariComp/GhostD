@@ -43,15 +43,15 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 1 — Context graph and logical replicas
 
-**Status:** Not started
+**Status:** Complete
 
-- [ ] Add meaningful immutable `GhostRevision` checkpoints, each with an event high-water mark and workspace snapshot identity.
-- [ ] Add copy-on-write `GhostBranch` records with base and head revision IDs.
-- [ ] Record branch tracking revision, originating session, and explicit lifecycle state.
-- [ ] Add `ghost branch <name>` to create cold logical replicas without an LLM call.
-- [ ] Add `ghost branch close <name>`; preserve closed-branch history.
-- [ ] Add provider-specific `BranchMaterialization` records with a synchronized revision and provider handle; derive staleness from revision ancestry.
-- [ ] Prove immutable ancestry, zero-copy branch creation, and exact materialization revision attribution.
+- [x] Add meaningful immutable `GhostRevision` checkpoints, each with an event high-water mark and workspace snapshot identity.
+- [x] Add copy-on-write `GhostBranch` records with base and head revision IDs.
+- [x] Record branch tracking revision, originating session, and explicit lifecycle state.
+- [x] Add `ghost branch <name>` to create cold logical replicas without an LLM call.
+- [x] Add `ghost branch close <name>`; preserve closed-branch history.
+- [x] Add provider-specific `BranchMaterialization` records with a synchronized revision and provider handle; derive staleness from revision ancestry.
+- [x] Prove immutable ancestry, zero-copy branch creation, and exact materialization revision attribution with database integration tests.
 
 ## Phase 2 — Lazy materialization and target adapters
 

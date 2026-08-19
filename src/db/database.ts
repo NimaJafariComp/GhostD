@@ -1,9 +1,18 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { deriveTrustClass } from '../core/events.js';
 import type { GhostEvent } from '../core/events.js';
+import type {
+  BranchMaterialization,
+  BranchPersistence,
+  GhostBranch,
+  GhostRevision,
+  MaterializationStatus,
+  WorkspaceSnapshot,
+} from '../core/graph.js';
 import { redactEvent } from '../privacy/redaction.js';
 
 export interface StoredEvent extends GhostEvent {
@@ -31,6 +40,53 @@ interface SessionRow {
 
 interface ColumnRow {
   name: string;
+}
+
+interface RevisionRow {
+  id: string;
+  parent_revision_id: string | null;
+  session_id: string;
+  event_high_water_mark: number;
+  workspace_snapshot_id: string;
+  created_at: string;
+}
+
+interface WorkspaceSnapshotRow {
+  id: string;
+  cwd: string;
+  git_head: string | null;
+  git_status: string | null;
+}
+
+interface BranchRow {
+  id: string;
+  name: string;
+  persistence: BranchPersistence;
+  lifecycle: GhostBranch['lifecycle'];
+  base_revision_id: string;
+  head_revision_id: string;
+  tracking_revision_id: string;
+  originating_session_id: string;
+  created_at: string;
+  closed_at: string | null;
+}
+
+interface MaterializationRow {
+  id: string;
+  branch_id: string;
+  provider: string;
+  provider_handle: string | null;
+  synchronized_revision_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface EventCheckpointRow {
+  sequence: number;
+  timestamp: string;
+  workspace_cwd: string;
+  git_head: string | null;
+  git_status: string | null;
 }
 
 export class GhostDatabase {
@@ -140,6 +196,261 @@ export class GhostDatabase {
     }));
   }
 
+  /** Creates or returns an immutable checkpoint at a session event high-water mark. */
+  public createRevision(sessionId: string, eventHighWaterMark?: number): GhostRevision {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const checkpoint = eventHighWaterMark === undefined
+        ? this.database
+          .prepare(
+            `SELECT sequence, timestamp, workspace_cwd, git_head, git_status
+             FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT 1`,
+          )
+          .get(sessionId) as EventCheckpointRow | undefined
+        : this.database
+          .prepare(
+            `SELECT sequence, timestamp, workspace_cwd, git_head, git_status
+             FROM events WHERE session_id = ? AND sequence = ?`,
+          )
+          .get(sessionId, eventHighWaterMark) as EventCheckpointRow | undefined;
+      if (checkpoint === undefined) {
+        throw new Error(`No event checkpoint found for session ${sessionId}.`);
+      }
+
+      const existing = this.database
+        .prepare(
+          `SELECT id, parent_revision_id, session_id, event_high_water_mark, workspace_snapshot_id, created_at
+           FROM revisions WHERE session_id = ? AND event_high_water_mark = ?`,
+        )
+        .get(sessionId, checkpoint.sequence) as RevisionRow | undefined;
+      if (existing !== undefined) {
+        this.database.exec('COMMIT');
+        return revisionFromRow(existing);
+      }
+
+      const snapshot = snapshotFromCheckpoint(checkpoint);
+      this.database
+        .prepare(
+          `INSERT INTO workspace_snapshots (id, cwd, git_head, git_status)
+           VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+        )
+        .run(snapshot.id, snapshot.cwd, snapshot.gitHead ?? null, snapshot.gitStatus ?? null);
+
+      const parent = this.database
+        .prepare('SELECT id FROM revisions WHERE session_id = ? AND event_high_water_mark < ? ORDER BY event_high_water_mark DESC LIMIT 1')
+        .get(sessionId, checkpoint.sequence) as SessionRow | undefined;
+      const revision: GhostRevision = {
+        id: randomUUID(),
+        ...(parent === undefined ? {} : { parentRevisionId: parent.id }),
+        sessionId,
+        eventHighWaterMark: checkpoint.sequence,
+        workspaceSnapshotId: snapshot.id,
+        createdAt: checkpoint.timestamp,
+      };
+      this.database
+        .prepare(
+          `INSERT INTO revisions (
+             id, parent_revision_id, session_id, event_high_water_mark, workspace_snapshot_id, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          revision.id,
+          revision.parentRevisionId ?? null,
+          revision.sessionId,
+          revision.eventHighWaterMark,
+          revision.workspaceSnapshotId,
+          revision.createdAt,
+        );
+      this.database.exec('COMMIT');
+      return revision;
+    } catch (error: unknown) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  public revision(id: string): GhostRevision | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, parent_revision_id, session_id, event_high_water_mark, workspace_snapshot_id, created_at
+         FROM revisions WHERE id = ?`,
+      )
+      .get(id) as RevisionRow | undefined;
+    return row === undefined ? undefined : revisionFromRow(row);
+  }
+
+  public workspaceSnapshot(id: string): WorkspaceSnapshot | undefined {
+    const row = this.database
+      .prepare('SELECT id, cwd, git_head, git_status FROM workspace_snapshots WHERE id = ?')
+      .get(id) as WorkspaceSnapshotRow | undefined;
+    return row === undefined ? undefined : workspaceSnapshotFromRow(row);
+  }
+
+  /** Creates a persistent or ephemeral logical branch without copying event history. */
+  public createBranch(name: string, revisionId: string, persistence: BranchPersistence = 'persistent'): GhostBranch {
+    if (name.trim().length === 0 || /\s/.test(name)) {
+      throw new Error('Branch names must be non-empty and contain no whitespace.');
+    }
+    const revision = this.revision(revisionId);
+    if (revision === undefined) {
+      throw new Error(`Revision ${revisionId} does not exist.`);
+    }
+    const existing = this.branch(name);
+    if (existing !== undefined) {
+      throw new Error(`Branch ${name} already exists.`);
+    }
+
+    const branch: GhostBranch = {
+      id: randomUUID(),
+      name,
+      persistence,
+      lifecycle: 'open',
+      baseRevisionId: revision.id,
+      headRevisionId: revision.id,
+      trackingRevisionId: revision.id,
+      originatingSessionId: revision.sessionId,
+      createdAt: revision.createdAt,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO branches (
+           id, name, persistence, lifecycle, base_revision_id, head_revision_id, tracking_revision_id,
+           originating_session_id, created_at, closed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(
+        branch.id,
+        branch.name,
+        branch.persistence,
+        branch.lifecycle,
+        branch.baseRevisionId,
+        branch.headRevisionId,
+        branch.trackingRevisionId,
+        branch.originatingSessionId,
+        branch.createdAt,
+      );
+    return branch;
+  }
+
+  public branch(name: string): GhostBranch | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, name, persistence, lifecycle, base_revision_id, head_revision_id, tracking_revision_id,
+                originating_session_id, created_at, closed_at
+         FROM branches WHERE name = ?`,
+      )
+      .get(name) as BranchRow | undefined;
+    return row === undefined ? undefined : branchFromRow(row);
+  }
+
+  /** Closing a branch changes its lifecycle only; all history and materializations remain available. */
+  public closeBranch(name: string, closedAt = new Date().toISOString()): GhostBranch {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    if (branch.lifecycle === 'closed') {
+      return branch;
+    }
+    this.database
+      .prepare('UPDATE branches SET lifecycle = ?, closed_at = ? WHERE id = ?')
+      .run('closed', closedAt, branch.id);
+    return { ...branch, lifecycle: 'closed', closedAt };
+  }
+
+  /** Records a provider handle against an exact reachable revision; handles may be omitted or later discarded. */
+  public recordMaterialization(
+    branchName: string,
+    provider: string,
+    synchronizedRevisionId: string,
+    providerHandle?: string,
+    timestamp = new Date().toISOString(),
+  ): BranchMaterialization {
+    if (provider.trim().length === 0) {
+      throw new Error('A materialization provider is required.');
+    }
+    const branch = this.branch(branchName);
+    if (branch === undefined) {
+      throw new Error(`Branch ${branchName} does not exist.`);
+    }
+    if (branch.lifecycle !== 'open') {
+      throw new Error(`Branch ${branchName} is closed.`);
+    }
+    if (!this.isRevisionAncestor(synchronizedRevisionId, branch.headRevisionId)) {
+      throw new Error(`Revision ${synchronizedRevisionId} is not reachable from branch ${branchName}.`);
+    }
+
+    const materialization: BranchMaterialization = {
+      id: randomUUID(),
+      branchId: branch.id,
+      provider,
+      ...(providerHandle === undefined ? {} : { providerHandle }),
+      synchronizedRevisionId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO branch_materializations (
+           id, branch_id, provider, provider_handle, synchronized_revision_id, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        materialization.id,
+        materialization.branchId,
+        materialization.provider,
+        materialization.providerHandle ?? null,
+        materialization.synchronizedRevisionId,
+        materialization.createdAt,
+        materialization.updatedAt,
+      );
+    return materialization;
+  }
+
+  public materializationStatus(id: string): MaterializationStatus | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, provider, provider_handle, synchronized_revision_id, created_at, updated_at
+         FROM branch_materializations WHERE id = ?`,
+      )
+      .get(id) as MaterializationRow | undefined;
+    if (row === undefined) {
+      return undefined;
+    }
+    const materialization = materializationFromRow(row);
+    const branch = this.database
+      .prepare(
+        `SELECT id, name, persistence, lifecycle, base_revision_id, head_revision_id, tracking_revision_id,
+                originating_session_id, created_at, closed_at
+         FROM branches WHERE id = ?`,
+      )
+      .get(materialization.branchId) as BranchRow | undefined;
+    if (branch === undefined) {
+      throw new Error(`Materialization ${id} has no branch.`);
+    }
+    return {
+      materialization,
+      stale: !this.isRevisionAncestor(materialization.synchronizedRevisionId, branch.head_revision_id)
+        || materialization.synchronizedRevisionId !== branch.head_revision_id,
+    };
+  }
+
+  /** Returns true when the first revision is equal to or an ancestor of the second revision. */
+  public isRevisionAncestor(ancestorRevisionId: string, descendantRevisionId: string): boolean {
+    const row = this.database
+      .prepare(
+        `WITH RECURSIVE lineage(id, parent_revision_id) AS (
+           SELECT id, parent_revision_id FROM revisions WHERE id = ?
+           UNION ALL
+           SELECT revisions.id, revisions.parent_revision_id
+           FROM revisions JOIN lineage ON revisions.id = lineage.parent_revision_id
+         )
+         SELECT EXISTS(SELECT 1 FROM lineage WHERE id = ?) AS is_ancestor`,
+      )
+      .get(descendantRevisionId, ancestorRevisionId) as { is_ancestor: number };
+    return row.is_ancestor === 1;
+  }
+
   private migrate(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
@@ -169,6 +480,52 @@ export class GhostDatabase {
 
       CREATE INDEX IF NOT EXISTS events_session_sequence
       ON events(session_id, sequence);
+
+      CREATE TABLE IF NOT EXISTS workspace_snapshots (
+        id TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL,
+        git_head TEXT,
+        git_status TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS revisions (
+        id TEXT PRIMARY KEY,
+        parent_revision_id TEXT REFERENCES revisions(id) ON DELETE RESTRICT,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+        event_high_water_mark INTEGER NOT NULL,
+        workspace_snapshot_id TEXT NOT NULL REFERENCES workspace_snapshots(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id, event_high_water_mark)
+      );
+
+      CREATE INDEX IF NOT EXISTS revisions_session_high_water
+      ON revisions(session_id, event_high_water_mark);
+
+      CREATE TABLE IF NOT EXISTS branches (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        persistence TEXT NOT NULL CHECK (persistence IN ('persistent', 'ephemeral')),
+        lifecycle TEXT NOT NULL CHECK (lifecycle IN ('open', 'closed')),
+        base_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        head_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        tracking_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        originating_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        closed_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS branch_materializations (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL,
+        provider_handle TEXT,
+        synchronized_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS branch_materializations_branch_created
+      ON branch_materializations(branch_id, created_at);
     `);
 
     const eventColumns = this.database.prepare('PRAGMA table_info(events)').all() as unknown as ColumnRow[];
@@ -179,4 +536,65 @@ export class GhostDatabase {
       this.database.exec('ALTER TABLE events ADD COLUMN trust_class TEXT');
     }
   }
+}
+
+function snapshotFromCheckpoint(checkpoint: EventCheckpointRow): WorkspaceSnapshot {
+  const json = JSON.stringify({
+    cwd: checkpoint.workspace_cwd,
+    gitHead: checkpoint.git_head,
+    gitStatus: checkpoint.git_status,
+  });
+  return {
+    id: createHash('sha256').update(json).digest('hex'),
+    cwd: checkpoint.workspace_cwd,
+    ...(checkpoint.git_head === null ? {} : { gitHead: checkpoint.git_head }),
+    ...(checkpoint.git_status === null ? {} : { gitStatus: checkpoint.git_status }),
+  };
+}
+
+function revisionFromRow(row: RevisionRow): GhostRevision {
+  return {
+    id: row.id,
+    ...(row.parent_revision_id === null ? {} : { parentRevisionId: row.parent_revision_id }),
+    sessionId: row.session_id,
+    eventHighWaterMark: row.event_high_water_mark,
+    workspaceSnapshotId: row.workspace_snapshot_id,
+    createdAt: row.created_at,
+  };
+}
+
+function workspaceSnapshotFromRow(row: WorkspaceSnapshotRow): WorkspaceSnapshot {
+  return {
+    id: row.id,
+    cwd: row.cwd,
+    ...(row.git_head === null ? {} : { gitHead: row.git_head }),
+    ...(row.git_status === null ? {} : { gitStatus: row.git_status }),
+  };
+}
+
+function branchFromRow(row: BranchRow): GhostBranch {
+  return {
+    id: row.id,
+    name: row.name,
+    persistence: row.persistence,
+    lifecycle: row.lifecycle,
+    baseRevisionId: row.base_revision_id,
+    headRevisionId: row.head_revision_id,
+    trackingRevisionId: row.tracking_revision_id,
+    originatingSessionId: row.originating_session_id,
+    createdAt: row.created_at,
+    ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
+  };
+}
+
+function materializationFromRow(row: MaterializationRow): BranchMaterialization {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    provider: row.provider,
+    ...(row.provider_handle === null ? {} : { providerHandle: row.provider_handle }),
+    synchronizedRevisionId: row.synchronized_revision_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
