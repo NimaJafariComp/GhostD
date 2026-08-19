@@ -21,12 +21,12 @@ export const defaultRedactionPolicies: Readonly<Record<RedactionScope, Redaction
   },
 };
 
-const sensitiveField = /(?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)/i;
-const privateKeyBlock = /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z]+)? PRIVATE KEY-----/g;
+const sensitiveField = /(?:api[\s_-]?key|authorization|credential|password|private[\s_-]?key|secret|token)/i;
+const privateKeyBlock = /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z]+)? PRIVATE KEY-----|$)/g;
 const bearerToken = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const knownToken = /\b(?:sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/g;
 const authorizationAssignment = /\bauthorization\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi;
-const namedAssignment = /\b((?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)\s*[:=]\s*)([^\s,;]+)/gi;
+const namedAssignment = /\b((?:api[\s_-]?key|authorization|credential|password|private[\s_-]?key|secret|token)\s*[:=]\s*)([^\s,;]+)/gi;
 
 export interface RedactionResult<T> {
   value: T;

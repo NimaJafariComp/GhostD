@@ -63,6 +63,30 @@ describe('CodexAdapter', () => {
     expect(events.filter((event) => event.type === 'file_change')).toHaveLength(6);
   });
 
+  it('ignores unsupported hook events and rejects supported events without a session identifier', () => {
+    const adapter = new CodexAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'hook-id');
+
+    expect(adapter.normalize({ hook_event_name: 'UnknownFutureEvent' })).toEqual([]);
+    expect(() => adapter.normalize({ hook_event_name: 'PostToolUse' })).toThrow('missing session_id');
+  });
+
+  it('preserves structured tool output and accepts Codex event-name aliases', () => {
+    const adapter = new CodexAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'hook-id');
+
+    const [event] = adapter.normalize({
+      eventName: 'post-tool-use',
+      sessionId: 'codex-session',
+      toolName: 'exec_command',
+      toolResponse: { exitCode: 1, output: 'failed' },
+    });
+
+    expect(event).toMatchObject({
+      type: 'tool_result',
+      trustClass: 'tool',
+      payload: { tool: 'exec_command', output: { exitCode: 1, output: 'failed' } },
+    });
+  });
+
   it('merges Ghost hooks without replacing existing project hook entries', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'ghostd-codex-hooks-'));
     temporaryDirectories.push(directory);
@@ -78,5 +102,30 @@ describe('CodexAdapter', () => {
     expect(config.hooks.Stop?.[0]?.hooks.map(({ command }) => command)).toEqual(['existing-hook', 'ghost codex-hook']);
     expect(config.hooks.UserPromptSubmit?.[0]?.hooks.map(({ command }) => command)).toEqual(['ghost codex-hook']);
     expect(await readFile(join(configDirectory, 'config.toml'), 'utf8')).toBe('[features]\nhooks = true\n');
+  });
+
+  it('enables hooks in an existing Codex config without replacing other settings', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-codex-config-'));
+    temporaryDirectories.push(directory);
+    const configDirectory = join(directory, '.codex');
+    await mkdir(configDirectory, { recursive: true });
+    const configPath = join(configDirectory, 'config.toml');
+    await writeFile(configPath, '[features]\nexperimental = true\nhooks = false # disabled\n\n[profiles.fast]\nmodel = "fast"\n');
+
+    await installCodexHooks(directory, 'ghost codex-hook');
+
+    expect(await readFile(configPath, 'utf8')).toBe(
+      '[features]\nexperimental = true\nhooks = true # disabled\n\n[profiles.fast]\nmodel = "fast"\n',
+    );
+  });
+
+  it('rejects malformed hook configuration rather than overwriting it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-codex-invalid-'));
+    temporaryDirectories.push(directory);
+    const configDirectory = join(directory, '.codex');
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(join(configDirectory, 'hooks.json'), JSON.stringify({ hooks: [] }));
+
+    await expect(installCodexHooks(directory, 'ghost codex-hook')).rejects.toThrow('Codex hooks configuration must be a JSON object');
   });
 });

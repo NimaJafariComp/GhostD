@@ -76,4 +76,63 @@ describe('compileContext', () => {
     expect(renderContext(context)).toContain('dirty: yes');
     expect(renderContext(context, true)).toContain('[from: event-1]');
   });
+
+  it('keeps only the active window after an explicit changed direction', () => {
+    const changedDirection: StoredEvent[] = [
+      {
+        ...events[0]!,
+        id: 'old-objective',
+        sequence: 1,
+        payload: { text: 'Implement blue mode. Do not change the public API.' },
+      },
+      {
+        ...events[1]!,
+        id: 'old-decision',
+        sequence: 2,
+        payload: { text: 'We decided to use blue mode.' },
+      },
+      {
+        ...events[0]!,
+        id: 'new-objective',
+        sequence: 3,
+        payload: { text: 'The user changed direction. Implement green mode instead. Do not use blue mode.' },
+      },
+      {
+        ...events[1]!,
+        id: 'new-decision',
+        sequence: 4,
+        payload: { text: 'We decided to use green mode.' },
+        workspace: { cwd: '/work/payments-api', gitHead: 'abc123', gitStatus: '' },
+      },
+    ];
+
+    const context = compileContext([...changedDirection].reverse());
+    const rendered = renderContext(context);
+
+    expect(context.currentObjective.value).toContain('green mode');
+    expect(context.userRequirements.map(({ value }) => value)).toEqual([
+      'The user changed direction. Implement green mode instead. Do not use blue mode.',
+    ]);
+    expect(context.importantDecisions.map(({ value }) => value)).toEqual(['We decided to use green mode.']);
+    expect(context.modifiedFiles).toEqual([]);
+    expect(rendered).not.toContain('We decided to use blue mode.');
+  });
+
+  it('uses the newest workspace snapshot instead of stale file-change events', () => {
+    const context = compileContext([
+      ...events,
+      {
+        ...events[3]!,
+        id: 'event-5',
+        sequence: 5,
+        type: 'turn_end',
+        trustClass: 'system',
+        payload: { reason: 'completed' },
+        workspace: { cwd: '/work/payments-api', gitHead: 'abc123', gitStatus: '' },
+      },
+    ]);
+
+    expect(context.modifiedFiles).toEqual([]);
+    expect(context.workspace.dirty).toBe(false);
+  });
 });

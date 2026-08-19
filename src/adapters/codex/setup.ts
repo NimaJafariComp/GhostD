@@ -28,7 +28,33 @@ interface HookConfig {
 }
 
 function isHookConfig(value: unknown): value is HookConfig {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const hooks = (value as Record<string, unknown>)['hooks'];
+  if (hooks === undefined) {
+    return true;
+  }
+  return typeof hooks === 'object' && hooks !== null && !Array.isArray(hooks)
+    && Object.values(hooks).every((groups) => Array.isArray(groups) && groups.every(isHookGroup));
+}
+
+function isHookGroup(value: unknown): value is HookGroup {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const group = value as Record<string, unknown>;
+  return (group['matcher'] === undefined || typeof group['matcher'] === 'string')
+    && Array.isArray(group['hooks'])
+    && group['hooks'].every(isHookHandler);
+}
+
+function isHookHandler(value: unknown): value is HookHandler {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const handler = value as Record<string, unknown>;
+  return handler['type'] === 'command' && typeof handler['command'] === 'string';
 }
 
 function quote(argument: string): string {
@@ -72,14 +98,47 @@ export async function installCodexHooks(workspace: string, ghostCommand: string)
 
 async function enableCodexHooks(configDirectory: string): Promise<void> {
   const configPath = join(configDirectory, 'config.toml');
+  let config: string;
   try {
-    await readFile(configPath, 'utf8');
+    config = await readFile(configPath, 'utf8');
   } catch (error: unknown) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
       throw error;
     }
-    await writeFile(configPath, '[features]\nhooks = true\n', 'utf8');
+    config = '';
   }
+
+  const updated = enableFeature(config, 'hooks');
+  if (updated !== config) {
+    await writeFile(configPath, updated, 'utf8');
+  }
+}
+
+function enableFeature(config: string, feature: string): string {
+  const lines = config.split('\n');
+  const section = lines.findIndex((line) => line.trim() === '[features]');
+  if (section === -1) {
+    const separator = config.length === 0 || config.endsWith('\n') ? '' : '\n';
+    return `${config}${separator}[features]\n${feature} = true\n`;
+  }
+
+  let sectionEnd = lines.length;
+  for (let index = section + 1; index < lines.length; index += 1) {
+    if (/^\s*\[.+\]\s*$/.test(lines[index] ?? '')) {
+      sectionEnd = index;
+      break;
+    }
+  }
+  const featureLine = new RegExp(`^(\\s*${feature}\\s*=\\s*)[^#\\s]+(\\s*(?:#.*)?)$`);
+  for (let index = section + 1; index < sectionEnd; index += 1) {
+    const line = lines[index];
+    if (line !== undefined && featureLine.test(line)) {
+      lines[index] = line.replace(featureLine, '$1true$2');
+      return lines.join('\n');
+    }
+  }
+  lines.splice(sectionEnd, 0, `${feature} = true`);
+  return lines.join('\n');
 }
 
 export function hookCommand(nodePath: string, entryPath: string): string {

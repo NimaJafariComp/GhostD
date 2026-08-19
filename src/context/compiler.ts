@@ -89,31 +89,62 @@ function isUnresolvedQuestion(text: string): boolean {
   return /\?|\b(unresolved|open question|remain(?:s)? open|need to decide)\b/i.test(text);
 }
 
+function supersedesPriorContext(text: string): boolean {
+  return /\b(changed direction|change of direction|current objective|new objective|instead|replace[sd]?|supersed(?:e|es|ed|ing)|no longer)\b/i.test(text);
+}
+
+function pathsFromGitStatus(status: string): string[] {
+  return status
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      if (line.length < 4) {
+        return [];
+      }
+      const path = line.slice(3).trim();
+      if (path.length === 0) {
+        return [];
+      }
+      const renamedPath = path.split(' -> ').at(-1);
+      return renamedPath === undefined ? [] : [renamedPath];
+    });
+}
+
 export function compileContext(events: StoredEvent[]): CompiledContext {
-  const latest = events.at(-1);
+  const orderedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
+  const latest = orderedEvents.at(-1);
   if (latest === undefined) {
     throw new Error('Cannot compile context for an empty session.');
   }
 
-  const userMessages = events
+  const userMessages = orderedEvents
     .filter((event) => event.type === 'user_message')
     .flatMap((event) => {
       const value = eventText(event, 'text', 'message');
       return value === undefined ? [] : [{ value, event }];
     });
-  const assistantMessages = events
+  const supersedingMessage = userMessages.findLast(({ value }) => supersedesPriorContext(value));
+  const activeEvents = supersedingMessage === undefined
+    ? orderedEvents
+    : orderedEvents.filter((event) => event.sequence >= supersedingMessage.event.sequence);
+  const activeUserMessages = activeEvents
+    .filter((event) => event.type === 'user_message')
+    .flatMap((event) => {
+      const value = eventText(event, 'text', 'message');
+      return value === undefined ? [] : [{ value, event }];
+    });
+  const assistantMessages = activeEvents
     .filter((event) => event.type === 'assistant_message')
     .flatMap((event) => {
       const value = eventText(event, 'text', 'message');
       return value === undefined ? [] : [{ value, event }];
     });
-  const toolResults = events
+  const toolResults = activeEvents
     .filter((event) => event.type === 'tool_result')
     .flatMap((event) => {
       const value = eventText(event, 'output', 'text', 'message');
       return value === undefined ? [] : [{ value, event }];
     });
-  const changedFiles = events
+  const changedFiles = activeEvents
     .filter((event) => event.type === 'file_change')
     .flatMap((event) => {
       const value = eventText(event, 'path', 'file');
@@ -125,14 +156,14 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
     objectiveCandidate === undefined
       ? { value: 'No user objective has been captured yet.', sources: [] }
       : { value: objectiveCandidate.value, sources: [eventRef(objectiveCandidate.event)] };
-  const requirements = facts([...userMessages, ...assistantMessages].filter(({ value }) => isRequirement(value)));
+  const requirements = facts([...activeUserMessages, ...assistantMessages].filter(({ value }) => isRequirement(value)));
   const decisions = facts(assistantMessages.filter(({ value }) => isDecision(value)));
   const unresolvedQuestions = facts(
     [...userMessages, ...assistantMessages].filter(({ value }) => isUnresolvedQuestion(value)),
   );
   const failures = facts(toolResults.filter(({ value }) => isFailure(value)));
   const recentConversation = recent(
-    events
+    activeEvents
       .filter((event) => event.type === 'user_message' || event.type === 'assistant_message')
       .flatMap((event) => {
         const text = eventText(event, 'text', 'message');
@@ -156,7 +187,9 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
     userRequirements: recent(requirements, MAX_RECENT_MESSAGES),
     importantDecisions: recent(decisions, MAX_RECENT_DECISIONS),
     unresolvedQuestions: recent(unresolvedQuestions, MAX_RECENT_MESSAGES),
-    modifiedFiles: facts(changedFiles),
+    modifiedFiles: latest.workspace.gitStatus === undefined
+      ? facts(changedFiles)
+      : facts(pathsFromGitStatus(latest.workspace.gitStatus).map((value) => ({ value, event: latest }))),
     recentFailures: recent(failures, MAX_RECENT_FAILURES),
     recentConversation,
     workspace: {
