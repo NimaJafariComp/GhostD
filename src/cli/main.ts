@@ -8,6 +8,8 @@ import { stdin as input, stdout as output } from 'node:process';
 
 import { CodexAdapter } from '../adapters/codex/adapter.js';
 import { hookCommand, installCodexHooks } from '../adapters/codex/setup.js';
+import { ProviderCliManager, providerCliNames } from '../adapters/provider-cli.js';
+import type { ProviderCliName } from '../adapters/provider-cli.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
@@ -27,8 +29,43 @@ function usage(): string {
   ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
   ghost ask <branch> <prompt>
                             Ask Claude from a persistent Ghost branch.
+  ghost providers           Report which supported provider CLIs are installed.
+  ghost providers install <codex|claude|gemini|missing>
+                            Install selected missing provider CLIs from their official npm packages.
   ghost setup                Initialize local storage and the project Codex adapter.
   ghost codex-hook           Receive a Codex hook event on standard input.`;
+}
+
+function isProviderCliName(value: string): value is ProviderCliName {
+  return providerCliNames.includes(value as ProviderCliName);
+}
+
+async function providers(arguments_: string[]): Promise<void> {
+  const manager = new ProviderCliManager();
+  if (arguments_.length === 0) {
+    const statuses = await manager.statuses();
+    for (const status of statuses) {
+      const version = status.version === undefined ? '' : ` (${status.version})`;
+      output.write(`${status.displayName}: ${status.installed ? `installed${version}` : 'not installed'}\n`);
+    }
+    output.write('Authentication is not inspected. Sign in through each installed provider CLI before using it.\n');
+    return;
+  }
+
+  if (arguments_.at(0) !== 'install' || arguments_.length !== 2) {
+    throw new Error('Usage: ghost providers [install <codex|claude|gemini|missing>].');
+  }
+  const provider = arguments_.at(1);
+  if (provider === 'missing') {
+    const statuses = await manager.installMissing();
+    output.write(`Provider CLIs ready: ${statuses.map((status) => status.provider).join(', ')}. Sign in through each provider CLI before using it.\n`);
+    return;
+  }
+  if (provider === undefined || !isProviderCliName(provider)) {
+    throw new Error('Choose codex, claude, gemini, or missing.');
+  }
+  const status = await manager.install(provider);
+  output.write(`${status.displayName} is installed. Sign in through its CLI before using it.\n`);
 }
 
 async function readIngestInput(filePath: string | undefined): Promise<string> {
@@ -196,6 +233,9 @@ async function main(): Promise<void> {
       return;
     case 'ask':
       await ask(arguments_);
+      return;
+    case 'providers':
+      await providers(arguments_);
       return;
     case 'setup':
       await setup();
