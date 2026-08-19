@@ -67,12 +67,12 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 3 — Synchronization and temporal context
 
-**Status:** Not started
+**Status:** Complete
 
-- [ ] Add lazy delta synchronization and stale-materialization detection.
-- [ ] Add explicit `ghost rebase <branch>` with rebase-fidelity evaluation.
-- [ ] Track temporal validity, supersession, reaffirmation, and invalidation for constraints, decisions, assumptions, failures, and hypotheses.
-- [ ] Add Claude as a source.
+- [x] Add lazy delta synchronization and stale-materialization detection. `ghost branch status <name>` creates only the necessary immutable checkpoint and reports pending events separately from stale branch materializations.
+- [x] Add explicit `ghost rebase <branch>` with rebase-fidelity evaluation. Rebase advances only the branch head/tracking pointers, records an auditable rebase, and never rewrites events, revisions, or prior provider runs.
+- [x] Track temporal validity, supersession, reaffirmation, and invalidation for constraints, decisions, assumptions, failures, and hypotheses using explicit canonical payload relations; malformed or prose-only metadata never causes guessed state transitions.
+- [x] Add the Claude hook-shaped source normalizer and `ghost claude-hook` ingestion boundary without reading hidden provider transcripts or state.
 
 ## Phase 4 — Multi-agent reasoning
 

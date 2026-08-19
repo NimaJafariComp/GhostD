@@ -7,10 +7,13 @@ import { deriveTrustClass } from '../core/events.js';
 import type { GhostEvent } from '../core/events.js';
 import type {
   BranchMaterialization,
+  BranchRebase,
   BranchPersistence,
+  BranchSynchronizationStatus,
   GhostBranch,
   GhostRevision,
   MaterializationStatus,
+  RebaseResult,
   WorkspaceSnapshot,
 } from '../core/graph.js';
 import type {
@@ -106,6 +109,15 @@ interface MaterializationRunRow {
   failure_code: string | null;
   created_at: string;
   completed_at: string | null;
+}
+
+interface BranchRebaseRow {
+  id: string;
+  branch_id: string;
+  from_revision_id: string;
+  to_revision_id: string;
+  added_event_count: number;
+  created_at: string;
 }
 
 interface EventCheckpointRow {
@@ -466,6 +478,95 @@ export class GhostDatabase {
     };
   }
 
+  /**
+   * Lazily checkpoints newly captured events. It never moves a branch: the caller must
+   * explicitly rebase to accept that newer canonical revision.
+   */
+  public branchSynchronizationStatus(name: string): BranchSynchronizationStatus {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    const latestRevision = this.latestRevisionForBranch(branch);
+    const trackingRevision = this.revision(branch.trackingRevisionId);
+    if (trackingRevision === undefined) {
+      throw new Error(`Branch ${name} references a missing tracking revision.`);
+    }
+    const materializations = this.branchMaterializations(branch.id);
+    return {
+      branch,
+      latestRevision,
+      pendingEventCount: Math.max(0, latestRevision.eventHighWaterMark - trackingRevision.eventHighWaterMark),
+      rebaseRequired: branch.headRevisionId !== latestRevision.id,
+      staleMaterializationCount: materializations.filter(({ synchronizedRevisionId }) => synchronizedRevisionId !== branch.headRevisionId).length,
+    };
+  }
+
+  /** Rebase is explicit: it advances a branch pointer but never rewrites canonical history. */
+  public rebaseBranch(name: string, rebasedAt = new Date().toISOString()): RebaseResult {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    if (branch.lifecycle !== 'open') {
+      throw new Error(`Branch ${name} is closed.`);
+    }
+    const latestRevision = this.latestRevisionForBranch(branch);
+    const currentRevision = this.revision(branch.headRevisionId);
+    if (currentRevision === undefined) {
+      throw new Error(`Branch ${name} references a missing head revision.`);
+    }
+    const addedEventCount = Math.max(0, latestRevision.eventHighWaterMark - currentRevision.eventHighWaterMark);
+    if (latestRevision.id === branch.headRevisionId) {
+      return { branch, latestRevision, addedEventCount, rebased: false };
+    }
+    if (!this.isRevisionAncestor(branch.headRevisionId, latestRevision.id)) {
+      throw new Error(`Branch ${name} cannot rebase onto an unrelated revision.`);
+    }
+
+    const rebase: BranchRebase = {
+      id: randomUUID(),
+      branchId: branch.id,
+      fromRevisionId: branch.headRevisionId,
+      toRevisionId: latestRevision.id,
+      addedEventCount,
+      createdAt: rebasedAt,
+    };
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      this.database
+        .prepare('UPDATE branches SET head_revision_id = ?, tracking_revision_id = ? WHERE id = ?')
+        .run(latestRevision.id, latestRevision.id, branch.id);
+      this.database
+        .prepare(
+          `INSERT INTO branch_rebases (
+             id, branch_id, from_revision_id, to_revision_id, added_event_count, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(rebase.id, rebase.branchId, rebase.fromRevisionId, rebase.toRevisionId, rebase.addedEventCount, rebase.createdAt);
+      this.database.exec('COMMIT');
+    } catch (error: unknown) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+    const rebasedBranch = { ...branch, headRevisionId: latestRevision.id, trackingRevisionId: latestRevision.id };
+    return { branch: rebasedBranch, latestRevision, addedEventCount, rebased: true, rebase };
+  }
+
+  public rebasesForBranch(name: string): BranchRebase[] {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, branch_id, from_revision_id, to_revision_id, added_event_count, created_at
+         FROM branch_rebases WHERE branch_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(branch.id) as unknown as BranchRebaseRow[];
+    return rows.map(branchRebaseFromRow);
+  }
+
   public startMaterializationRun(input: StartMaterializationRun): MaterializationRun {
     const branch = this.branchById(input.branchId);
     if (branch === undefined) {
@@ -617,6 +718,20 @@ export class GhostDatabase {
     return row === undefined ? undefined : branchFromRow(row);
   }
 
+  private latestRevisionForBranch(branch: GhostBranch): GhostRevision {
+    return this.createRevision(branch.originatingSessionId);
+  }
+
+  private branchMaterializations(branchId: string): BranchMaterialization[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, branch_id, provider, provider_handle, synchronized_revision_id, created_at, updated_at
+         FROM branch_materializations WHERE branch_id = ?`,
+      )
+      .all(branchId) as unknown as MaterializationRow[];
+    return rows.map(materializationFromRow);
+  }
+
   private migrate(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
@@ -692,6 +807,18 @@ export class GhostDatabase {
 
       CREATE INDEX IF NOT EXISTS branch_materializations_branch_created
       ON branch_materializations(branch_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS branch_rebases (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        from_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        to_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        added_event_count INTEGER NOT NULL CHECK (added_event_count >= 0),
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS branch_rebases_branch_created
+      ON branch_rebases(branch_id, created_at);
 
       CREATE TABLE IF NOT EXISTS materialization_runs (
         id TEXT PRIMARY KEY,
@@ -794,6 +921,17 @@ function materializationFromRow(row: MaterializationRow): BranchMaterialization 
     synchronizedRevisionId: row.synchronized_revision_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function branchRebaseFromRow(row: BranchRebaseRow): BranchRebase {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    fromRevisionId: row.from_revision_id,
+    toRevisionId: row.to_revision_id,
+    addedEventCount: row.added_event_count,
+    createdAt: row.created_at,
   };
 }
 

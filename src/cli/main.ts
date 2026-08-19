@@ -8,6 +8,7 @@ import { stdin as input, stdout as output } from 'node:process';
 
 import { CodexAdapter } from '../adapters/codex/adapter.js';
 import { hookCommand, installCodexHooks } from '../adapters/codex/setup.js';
+import { ClaudeSourceAdapter } from '../adapters/claude/source.js';
 import { ProviderCliManager, providerCliNames } from '../adapters/provider-cli.js';
 import type { ProviderCliName } from '../adapters/provider-cli.js';
 import { compileContext, renderContext } from '../context/compiler.js';
@@ -26,6 +27,9 @@ function usage(): string {
                             Render a deterministic context handoff.
   ghost branch <name>       Create a cold logical branch from the latest session checkpoint.
   ghost branch close <name> Close a branch while preserving its history.
+  ghost branch status <name>
+                            Show pending synchronization and stale materializations.
+  ghost rebase <branch>     Explicitly advance a branch to its latest captured revision.
   ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
   ghost ask <branch> <prompt>
                             Ask Claude from a persistent Ghost branch.
@@ -33,7 +37,8 @@ function usage(): string {
   ghost providers install <codex|claude|gemini|missing>
                             Install selected missing provider CLIs from their official npm packages.
   ghost setup                Initialize local storage and the project Codex adapter.
-  ghost codex-hook           Receive a Codex hook event on standard input.`;
+  ghost codex-hook           Receive a Codex hook event on standard input.
+  ghost claude-hook          Receive a Claude hook event on standard input.`;
 }
 
 function isProviderCliName(value: string): value is ProviderCliName {
@@ -136,6 +141,19 @@ async function branch(arguments_: string[]): Promise<void> {
       output.write(`Closed branch ${closed.name}; history remains available at revision ${closed.headRevisionId}.\n`);
       return;
     }
+    if (arguments_.at(0) === 'status') {
+      const name = arguments_.at(1);
+      if (name === undefined || arguments_.length !== 2) {
+        throw new Error('Usage: ghost branch status <name>.');
+      }
+      const status = database.branchSynchronizationStatus(name);
+      output.write(
+        `Branch ${status.branch.name}: ${status.pendingEventCount} pending event${status.pendingEventCount === 1 ? '' : 's'}, `
+        + `${status.staleMaterializationCount} stale materialization${status.staleMaterializationCount === 1 ? '' : 's'}, `
+        + `${status.rebaseRequired ? 'rebase required' : 'up to date'}.\n`,
+      );
+      return;
+    }
 
     const name = arguments_.at(0);
     if (name === undefined || arguments_.length !== 1) {
@@ -148,6 +166,28 @@ async function branch(arguments_: string[]): Promise<void> {
     const revision = database.createRevision(sessionId);
     const created = database.createBranch(name, revision.id);
     output.write(`Created cold branch ${created.name} at revision ${created.headRevisionId}.\n`);
+  } finally {
+    database.close();
+  }
+}
+
+async function rebase(arguments_: string[]): Promise<void> {
+  const name = arguments_.at(0);
+  if (name === undefined || arguments_.length !== 1) {
+    throw new Error('Usage: ghost rebase <branch>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const result = database.rebaseBranch(name);
+    if (!result.rebased) {
+      output.write(`Branch ${name} is already at revision ${result.latestRevision.id}.\n`);
+      return;
+    }
+    output.write(
+      `Rebased ${name} onto revision ${result.latestRevision.id}; `
+      + `${result.addedEventCount} captured event${result.addedEventCount === 1 ? '' : 's'} added. `
+      + 'Earlier materializations remain preserved and may be stale.\n',
+    );
   } finally {
     database.close();
   }
@@ -208,6 +248,27 @@ async function codexHook(): Promise<void> {
   }
 }
 
+async function claudeHook(): Promise<void> {
+  const contents = await readIngestInput(undefined);
+  let rawEvent: unknown;
+  try {
+    rawEvent = JSON.parse(contents) as unknown;
+  } catch {
+    throw new Error('Claude hook input is not valid JSON.');
+  }
+  if (typeof rawEvent !== 'object' || rawEvent === null || Array.isArray(rawEvent)) {
+    throw new Error('Claude hook input must be a JSON object.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    for (const event of new ClaudeSourceAdapter().normalize(rawEvent as Record<string, unknown>)) {
+      database.append(event);
+    }
+  } finally {
+    database.close();
+  }
+}
+
 async function setup(): Promise<void> {
   const database = await GhostDatabase.open(databasePath());
   database.close();
@@ -231,6 +292,9 @@ async function main(): Promise<void> {
     case 'branch':
       await branch(arguments_);
       return;
+    case 'rebase':
+      await rebase(arguments_);
+      return;
     case 'ask':
       await ask(arguments_);
       return;
@@ -242,6 +306,9 @@ async function main(): Promise<void> {
       return;
     case 'codex-hook':
       await codexHook();
+      return;
+    case 'claude-hook':
+      await claudeHook();
       return;
     case '--help':
     case '-h':

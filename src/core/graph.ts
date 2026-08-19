@@ -47,3 +47,28 @@ export interface MaterializationStatus {
   materialization: BranchMaterialization;
   stale: boolean;
 }
+
+export interface BranchSynchronizationStatus {
+  branch: GhostBranch;
+  latestRevision: GhostRevision;
+  pendingEventCount: number;
+  rebaseRequired: boolean;
+  staleMaterializationCount: number;
+}
+
+export interface BranchRebase {
+  id: string;
+  branchId: string;
+  fromRevisionId: string;
+  toRevisionId: string;
+  addedEventCount: number;
+  createdAt: string;
+}
+
+export interface RebaseResult {
+  branch: GhostBranch;
+  latestRevision: GhostRevision;
+  addedEventCount: number;
+  rebased: boolean;
+  rebase?: BranchRebase;
+}

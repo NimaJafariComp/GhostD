@@ -2,6 +2,8 @@ import { basename } from 'node:path';
 
 import type { StoredEvent } from '../db/database.js';
 import type { TrustClass } from '../core/events.js';
+import { temporalFacts } from '../core/temporal.js';
+import type { TemporalFact } from '../core/temporal.js';
 
 const MAX_RECENT_MESSAGES = 8;
 const MAX_RECENT_FAILURES = 5;
@@ -29,6 +31,7 @@ export interface CompiledContext {
   unresolvedQuestions: ContextFact[];
   modifiedFiles: ContextFact[];
   recentFailures: ContextFact[];
+  temporalFacts: TemporalFact[];
   recentConversation: ContextFact[];
   workspace: {
     cwd: string;
@@ -123,9 +126,16 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
       return value === undefined ? [] : [{ value, event }];
     });
   const supersedingMessage = userMessages.findLast(({ value }) => supersedesPriorContext(value));
-  const activeEvents = supersedingMessage === undefined
+  const activeWindow = supersedingMessage === undefined
     ? orderedEvents
     : orderedEvents.filter((event) => event.sequence >= supersedingMessage.event.sequence);
+  const temporal = temporalFacts(orderedEvents);
+  const obsoleteSourceEventIds = new Set(
+    temporal
+      .filter(({ state }) => state === 'superseded' || state === 'invalidated')
+      .flatMap(({ sourceEventIds }) => sourceEventIds),
+  );
+  const activeEvents = activeWindow.filter((event) => !obsoleteSourceEventIds.has(event.id));
   const activeUserMessages = activeEvents
     .filter((event) => event.type === 'user_message')
     .flatMap((event) => {
@@ -151,7 +161,7 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
       return value === undefined ? [] : [{ value, event }];
     });
 
-  const objectiveCandidate = userMessages.at(-1);
+  const objectiveCandidate = activeUserMessages.at(-1);
   const objective: ContextFact =
     objectiveCandidate === undefined
       ? { value: 'No user objective has been captured yet.', sources: [] }
@@ -191,6 +201,7 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
       ? facts(changedFiles)
       : facts(pathsFromGitStatus(latest.workspace.gitStatus).map((value) => ({ value, event: latest }))),
     recentFailures: recent(failures, MAX_RECENT_FAILURES),
+    temporalFacts: temporal.filter(({ state }) => state === 'active' || state === 'reaffirmed'),
     recentConversation,
     workspace: {
       cwd: latest.workspace.cwd,
@@ -201,6 +212,16 @@ export function compileContext(events: StoredEvent[]): CompiledContext {
   };
 
   return context;
+}
+
+function formatTemporalFacts(items: TemporalFact[], includeProvenance: boolean): string[] {
+  if (items.length === 0) {
+    return ['- None captured.'];
+  }
+  return items.map((item) => {
+    const provenance = includeProvenance ? ` [from: ${item.sourceEventIds.join(', ')}]` : '';
+    return `- [${item.kind}; ${item.state}] ${item.value}${provenance}`;
+  });
 }
 
 function formatFact(fact: ContextFact, includeProvenance: boolean): string {
@@ -241,6 +262,9 @@ export function renderContext(context: CompiledContext, includeProvenance = fals
     '',
     'RECENT FAILURES',
     ...formatList(context.recentFailures, 'None captured.', includeProvenance),
+    '',
+    'ACTIVE TEMPORAL FACTS',
+    ...formatTemporalFacts(context.temporalFacts, includeProvenance),
     '',
     'WORKSPACE',
     `cwd: ${context.workspace.cwd}`,
