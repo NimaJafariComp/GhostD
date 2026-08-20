@@ -58,8 +58,27 @@ interface EventRow {
   git_status: string | null;
 }
 
-interface SessionRow {
+interface SessionIdRow {
   id: string;
+}
+
+interface SessionRow extends SessionIdRow {
+  source: string;
+  source_session_id: string;
+  cwd: string;
+  created_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+}
+
+export interface CapturedSession {
+  id: string;
+  source: string;
+  sourceSessionId: string;
+  workspaceCwd: string;
+  createdAt: string;
+  lastSeenAt: string;
+  endedAt?: string;
 }
 
 interface ColumnRow {
@@ -262,25 +281,42 @@ export class GhostDatabase {
     const storedEvent = redactEvent(event, 'storage').value;
     const existing = this.database
       .prepare('SELECT id FROM events WHERE id = ?')
-      .get(storedEvent.id) as SessionRow | undefined;
+      .get(storedEvent.id) as SessionIdRow | undefined;
     if (existing !== undefined) {
       throw new Error(`Event ${storedEvent.id} already exists; events are append-only.`);
     }
 
     this.database.exec('BEGIN IMMEDIATE');
     try {
+      const sessionId = this.canonicalSessionId(storedEvent);
       const now = storedEvent.timestamp;
       this.database
         .prepare(
-          `INSERT INTO sessions (id, source, source_session_id, cwd, created_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at, cwd = excluded.cwd`,
+        `INSERT INTO sessions (id, source, source_session_id, cwd, created_at, last_seen_at, ended_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             last_seen_at = excluded.last_seen_at,
+             cwd = excluded.cwd,
+             ended_at = CASE
+               WHEN ? = 'session_start' THEN NULL
+               WHEN excluded.ended_at IS NOT NULL THEN excluded.ended_at
+               ELSE sessions.ended_at
+             END`,
         )
-        .run(storedEvent.sessionId, storedEvent.source, storedEvent.sessionId, storedEvent.workspace.cwd, now, now);
+        .run(
+          sessionId,
+          storedEvent.source,
+          storedEvent.sessionId,
+          storedEvent.workspace.cwd,
+          now,
+          now,
+          storedEvent.type === 'session_end' ? now : null,
+          storedEvent.type,
+        );
 
       const next = this.database
         .prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM events WHERE session_id = ?')
-        .get(storedEvent.sessionId) as { sequence: number };
+        .get(sessionId) as { sequence: number };
 
       this.database
         .prepare(
@@ -291,7 +327,7 @@ export class GhostDatabase {
         )
         .run(
           storedEvent.id,
-          storedEvent.sessionId,
+          sessionId,
           next.sequence,
           storedEvent.schemaVersion,
           storedEvent.timestamp,
@@ -312,9 +348,68 @@ export class GhostDatabase {
 
   public latestSessionId(): string | undefined {
     const row = this.database
-      .prepare('SELECT id FROM sessions ORDER BY last_seen_at DESC LIMIT 1')
+      .prepare('SELECT id, source, source_session_id, cwd, created_at, last_seen_at, ended_at FROM sessions ORDER BY last_seen_at DESC LIMIT 1')
       .get() as SessionRow | undefined;
-    return row?.id;
+    return row?.source_session_id;
+  }
+
+  public sessions(workspaceCwd?: string): CapturedSession[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, source, source_session_id, cwd, created_at, last_seen_at, ended_at
+         FROM sessions ${workspaceCwd === undefined ? '' : 'WHERE cwd = ?'}
+         ORDER BY last_seen_at DESC, rowid DESC`,
+      )
+      .all(...(workspaceCwd === undefined ? [] : [workspaceCwd])) as unknown as SessionRow[];
+    return rows.map(capturedSessionFromRow);
+  }
+
+  /** A user selection is the only durable active-session signal GhostD creates itself. */
+  public setActiveSession(workspaceCwd: string, sessionId: string, selectedAt = new Date().toISOString()): CapturedSession {
+    const session = this.session(sessionId);
+    if (session === undefined) {
+      throw new Error(`Session ${sessionId} does not exist.`);
+    }
+    if (session.workspaceCwd !== workspaceCwd) {
+      throw new Error(`Session ${sessionId} belongs to ${session.workspaceCwd}, not the current workspace.`);
+    }
+    this.database
+      .prepare(
+        `INSERT INTO active_session_selections (workspace_cwd, session_id, selected_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(workspace_cwd) DO UPDATE SET session_id = excluded.session_id, selected_at = excluded.selected_at`,
+      )
+      .run(workspaceCwd, sessionId, selectedAt);
+    return session;
+  }
+
+  public activeSession(workspaceCwd: string): CapturedSession | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT sessions.id, sessions.source, sessions.source_session_id, sessions.cwd, sessions.created_at, sessions.last_seen_at, sessions.ended_at
+         FROM active_session_selections
+         JOIN sessions ON sessions.id = active_session_selections.session_id
+         WHERE active_session_selections.workspace_cwd = ?`,
+      )
+      .get(workspaceCwd) as SessionRow | undefined;
+    return row === undefined ? undefined : capturedSessionFromRow(row);
+  }
+
+  /** Uses automatic selection only when exactly one currently open host session exists in this workspace. */
+  public resolvedSession(workspaceCwd: string): CapturedSession | undefined {
+    const selected = this.activeSession(workspaceCwd);
+    if (selected !== undefined) {
+      return selected;
+    }
+    const candidates = this.sessions(workspaceCwd).filter(({ endedAt }) => endedAt === undefined);
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+
+  public session(sessionId: string): CapturedSession | undefined {
+    const row = this.database
+      .prepare('SELECT id, source, source_session_id, cwd, created_at, last_seen_at, ended_at FROM sessions WHERE id = ?')
+      .get(sessionId) as SessionRow | undefined;
+    return row === undefined ? undefined : capturedSessionFromRow(row);
   }
 
   public eventsForSession(sessionId: string): StoredEvent[] {
@@ -322,6 +417,7 @@ export class GhostDatabase {
   }
 
   public eventsForSessionThrough(sessionId: string, eventHighWaterMark?: number): StoredEvent[] {
+    const storedSessionId = this.resolveStoredSessionId(sessionId);
     const rows = this.database
       .prepare(
         `SELECT id, session_id, sequence, schema_version, timestamp, source, type, trust_class, payload_json,
@@ -330,7 +426,7 @@ export class GhostDatabase {
          WHERE session_id = ? ${eventHighWaterMark === undefined ? '' : 'AND sequence <= ?'}
          ORDER BY sequence ASC`,
       )
-      .all(...(eventHighWaterMark === undefined ? [sessionId] : [sessionId, eventHighWaterMark])) as unknown as EventRow[];
+      .all(...(eventHighWaterMark === undefined ? [storedSessionId] : [storedSessionId, eventHighWaterMark])) as unknown as EventRow[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -352,6 +448,7 @@ export class GhostDatabase {
 
   /** Creates or returns an immutable checkpoint at a session event high-water mark. */
   public createRevision(sessionId: string, eventHighWaterMark?: number): GhostRevision {
+    sessionId = this.resolveStoredSessionId(sessionId);
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const checkpoint = eventHighWaterMark === undefined
@@ -392,7 +489,7 @@ export class GhostDatabase {
 
       const parent = this.database
         .prepare('SELECT id FROM revisions WHERE session_id = ? AND event_high_water_mark < ? ORDER BY event_high_water_mark DESC LIMIT 1')
-        .get(sessionId, checkpoint.sequence) as SessionRow | undefined;
+          .get(sessionId, checkpoint.sequence) as SessionIdRow | undefined;
       const revision: GhostRevision = {
         id: randomUUID(),
         ...(parent === undefined ? {} : { parentRevisionId: parent.id }),
@@ -483,7 +580,7 @@ export class GhostDatabase {
         branch.originatingSessionId,
         branch.createdAt,
       );
-    return branch;
+    return { ...branch, originatingSessionId: this.sourceSessionId(branch.originatingSessionId) };
   }
 
   public branch(name: string): GhostBranch | undefined {
@@ -494,7 +591,7 @@ export class GhostDatabase {
          FROM branches WHERE name = ?`,
       )
       .get(name) as BranchRow | undefined;
-    return row === undefined ? undefined : branchFromRow(row);
+    return row === undefined ? undefined : this.branchFromRow(row);
   }
 
   /** Closing a branch changes its lifecycle only; all history and materializations remain available. */
@@ -941,7 +1038,9 @@ export class GhostDatabase {
     if (target.lifecycle !== 'open') {
       throw new Error(`Branch ${targetName} is closed.`);
     }
-    if (source.originatingSessionId !== target.originatingSessionId) {
+    const sourceRevision = this.revision(source.headRevisionId);
+    const targetRevision = this.revision(target.headRevisionId);
+    if (sourceRevision === undefined || targetRevision === undefined || sourceRevision.sessionId !== targetRevision.sessionId) {
       throw new Error('Cannot merge branches from different sessions without an explicit cross-session merge strategy.');
     }
     if (source.headRevisionId === target.headRevisionId) {
@@ -1321,7 +1420,47 @@ export class GhostDatabase {
          FROM branches WHERE id = ?`,
       )
       .get(id) as BranchRow | undefined;
-    return row === undefined ? undefined : branchFromRow(row);
+    return row === undefined ? undefined : this.branchFromRow(row);
+  }
+
+  private canonicalSessionId(event: GhostEvent): string {
+    const legacy = this.database
+      .prepare('SELECT id FROM sessions WHERE id = ? AND source = ? AND source_session_id = ? AND cwd = ?')
+      .get(event.sessionId, event.source, event.sessionId, event.workspace.cwd) as SessionIdRow | undefined;
+    if (legacy !== undefined) {
+      return legacy.id;
+    }
+    return createHash('sha256')
+      .update(event.source)
+      .update('\0')
+      .update(event.sessionId)
+      .update('\0')
+      .update(event.workspace.cwd)
+      .digest('hex');
+  }
+
+  private resolveStoredSessionId(sessionId: string): string {
+    const exact = this.database.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId) as SessionIdRow | undefined;
+    if (exact !== undefined) return exact.id;
+    const rows = this.database
+      .prepare('SELECT id FROM sessions WHERE source_session_id = ? ORDER BY last_seen_at DESC, rowid DESC')
+      .all(sessionId) as unknown as SessionIdRow[];
+    if (rows.length === 0) return sessionId;
+    const [row] = rows;
+    if (rows.length === 1 && row !== undefined) return row.id;
+    throw new Error(`Provider session ID ${sessionId} is ambiguous; use ghost session list and select the canonical Ghost session ID.`);
+  }
+
+  private sourceSessionId(storedSessionId: string): string {
+    const row = this.database
+      .prepare('SELECT source_session_id FROM sessions WHERE id = ?')
+      .get(storedSessionId) as { source_session_id: string } | undefined;
+    return row?.source_session_id ?? storedSessionId;
+  }
+
+  private branchFromRow(row: BranchRow): GhostBranch {
+    const branch = branchFromRow(row);
+    return { ...branch, originatingSessionId: this.sourceSessionId(branch.originatingSessionId) };
   }
 
   private writeWorktreeById(id: string): WriteWorktree | undefined {
@@ -1356,7 +1495,14 @@ export class GhostDatabase {
         source_session_id TEXT NOT NULL,
         cwd TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL
+        last_seen_at TEXT NOT NULL,
+        ended_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS active_session_selections (
+        workspace_cwd TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+        selected_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS events (
@@ -1592,6 +1738,10 @@ export class GhostDatabase {
     if (!eventColumns.some(({ name }) => name === 'trust_class')) {
       this.database.exec('ALTER TABLE events ADD COLUMN trust_class TEXT');
     }
+    const sessionColumns = this.database.prepare('PRAGMA table_info(sessions)').all() as unknown as ColumnRow[];
+    if (!sessionColumns.some(({ name }) => name === 'ended_at')) {
+      this.database.exec('ALTER TABLE sessions ADD COLUMN ended_at TEXT');
+    }
     const materializationRunColumns = this.database.prepare('PRAGMA table_info(materialization_runs)').all() as unknown as ColumnRow[];
     if (!materializationRunColumns.some(({ name }) => name === 'response_text')) {
       this.database.exec('ALTER TABLE materialization_runs ADD COLUMN response_text TEXT');
@@ -1613,6 +1763,18 @@ function snapshotFromCheckpoint(checkpoint: EventCheckpointRow): WorkspaceSnapsh
     cwd: checkpoint.workspace_cwd,
     ...(checkpoint.git_head === null ? {} : { gitHead: checkpoint.git_head }),
     ...(checkpoint.git_status === null ? {} : { gitStatus: checkpoint.git_status }),
+  };
+}
+
+function capturedSessionFromRow(row: SessionRow): CapturedSession {
+  return {
+    id: row.id,
+    source: row.source,
+    sourceSessionId: row.source_session_id,
+    workspaceCwd: row.cwd,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
   };
 }
 

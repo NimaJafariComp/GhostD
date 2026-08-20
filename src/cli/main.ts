@@ -7,9 +7,11 @@ import { join, resolve } from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 
 import { CodexAdapter } from '../adapters/codex/adapter.js';
-import { hookCommand, installCodexHooks } from '../adapters/codex/setup.js';
+import { hookCommand } from '../adapters/codex/setup.js';
 import { ClaudeSourceAdapter } from '../adapters/claude/source.js';
 import { GeminiSourceAdapter } from '../adapters/gemini/source.js';
+import { capturableHosts, hostCaptureStatus, installHostCapture, removeHostCapture, unsupportedCaptureHosts } from '../adapters/host-setup.js';
+import type { CapturableHost, CaptureHost } from '../adapters/host-setup.js';
 import { ProviderCliManager, providerCliNames } from '../adapters/provider-cli.js';
 import type { ProviderCliName } from '../adapters/provider-cli.js';
 import { acpHandoff } from '../acp/handoff.js';
@@ -26,6 +28,18 @@ import { serveMcp } from '../mcp/server.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
+}
+
+function selectedSessionId(database: GhostDatabase): string | undefined {
+  return database.resolvedSession(process.cwd())?.id;
+}
+
+function requiredSelectedSessionId(database: GhostDatabase): string {
+  const sessionId = selectedSessionId(database);
+  if (sessionId === undefined) {
+    throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
+  }
+  return sessionId;
 }
 
 function usage(): string {
@@ -68,7 +82,14 @@ function usage(): string {
   ghost acp handoff <branch> Emit a provider-neutral ACP handoff pinned to a Ghost revision.
   ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
   ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
-  ghost setup                Initialize local storage and the project Codex adapter.
+  ghost setup                Initialize local storage and show supported host-capture status.
+  ghost setup <host> --approve
+                            Install documented project hooks for codex, claude, or gemini.
+  ghost setup remove <host> --approve
+                            Remove only GhostD's exact project hook command.
+  ghost session list         List captured sessions in the current workspace.
+  ghost session status       Show the selected and automatically resolvable session.
+  ghost session use <id>     Explicitly select a captured session for this workspace.
   ghost codex-hook           Receive a Codex hook event on standard input.
   ghost claude-hook          Receive a Claude hook event on standard input.
   ghost gemini-hook          Receive a Gemini hook event on standard input.`;
@@ -77,6 +98,9 @@ function usage(): string {
 function isProviderCliName(value: string): value is ProviderCliName {
   return providerCliNames.includes(value as ProviderCliName);
 }
+
+function isCapturableHost(value: string): value is CapturableHost { return capturableHosts.includes(value as CapturableHost); }
+function isCaptureHost(value: string): value is CaptureHost { return [...capturableHosts, ...unsupportedCaptureHosts].includes(value as CaptureHost); }
 
 function isIntegrationProvider(value: string): value is IntegrationProvider { return integrationProviders.includes(value as IntegrationProvider); }
 function isProviderMode(value: string): value is ProviderMode { return providerModes.includes(value as ProviderMode); }
@@ -177,9 +201,9 @@ async function context(arguments_: string[]): Promise<void> {
   const sessionId = arguments_.find((argument) => argument !== '--provenance');
   const database = await GhostDatabase.open(databasePath());
   try {
-    const resolvedSessionId = sessionId ?? database.latestSessionId();
+    const resolvedSessionId = sessionId ?? selectedSessionId(database);
     if (resolvedSessionId === undefined) {
-      throw new Error('No sessions have been captured. Run ghost ingest first.');
+      throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
     }
     const events = database.eventsForSession(resolvedSessionId);
     if (events.length === 0) {
@@ -221,10 +245,7 @@ async function branch(arguments_: string[]): Promise<void> {
     if (name === undefined || arguments_.length !== 1) {
       throw new Error('Usage: ghost branch <name>.');
     }
-    const sessionId = database.latestSessionId();
-    if (sessionId === undefined) {
-      throw new Error('No sessions have been captured. Run ghost ingest first.');
-    }
+    const sessionId = requiredSelectedSessionId(database);
     const revision = database.createRevision(sessionId);
     const created = database.createBranch(name, revision.id);
     output.write(`Created cold branch ${created.name} at revision ${created.headRevisionId}.\n`);
@@ -269,10 +290,7 @@ async function ask(arguments_: string[]): Promise<void> {
     let mode: 'ephemeral' | 'persistent' = 'persistent';
     let provider: 'claude' | 'gemini' = 'claude';
     if (target === 'claude' || target === 'gemini') {
-      const sessionId = database.latestSessionId();
-      if (sessionId === undefined) {
-        throw new Error('No sessions have been captured. Run ghost ingest first.');
-      }
+      const sessionId = requiredSelectedSessionId(database);
       const revision = database.createRevision(sessionId);
       ephemeralBranchName = `ask-${randomUUID()}`;
       database.createBranch(ephemeralBranchName, revision.id, 'ephemeral');
@@ -497,17 +515,116 @@ async function geminiHook(): Promise<void> {
   } finally {
     database.close();
   }
+  output.write('{}\n');
 }
 
-async function setup(): Promise<void> {
-  const database = await GhostDatabase.open(databasePath());
-  database.close();
+function hostCommands(): Record<CapturableHost, string> {
   const entryPath = process.argv[1];
   if (entryPath === undefined) {
     throw new Error('Unable to determine the Ghost CLI entry path.');
   }
-  const hookPath = await installCodexHooks(process.cwd(), hookCommand(process.execPath, resolve(entryPath)));
-  output.write(`Ghost storage ready: ${databasePath()}\nCodex hooks installed: ${hookPath}\nApprove this project in Codex before its hooks can run.\n`);
+  const command = (hook: 'codex-hook' | 'claude-hook' | 'gemini-hook'): string => `${quoteForShell(process.execPath)} ${quoteForShell(resolve(entryPath))} ${hook}`;
+  return {
+    codex: hookCommand(process.execPath, resolve(entryPath)),
+    claude: command('claude-hook'),
+    gemini: command('gemini-hook'),
+  };
+}
+
+async function session(arguments_: string[]): Promise<void> {
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const workspace = process.cwd();
+    switch (arguments_.at(0)) {
+      case 'list': {
+        if (arguments_.length !== 1) throw new Error('Usage: ghost session list.');
+        const selected = database.activeSession(workspace)?.id;
+        const sessions = database.sessions(workspace);
+        if (sessions.length === 0) {
+          output.write(`No captured sessions in ${workspace}. Enable a supported host with ghost setup <host> --approve.\n`);
+          return;
+        }
+        for (const captured of sessions) {
+          const state = captured.endedAt === undefined ? 'open' : `ended ${captured.endedAt}`;
+          const selectedMarker = captured.id === selected ? ' selected' : '';
+          output.write(`${captured.id}  ${captured.source}:${captured.sourceSessionId}  ${state}${selectedMarker}\n`);
+        }
+        return;
+      }
+      case 'status': {
+        if (arguments_.length !== 1) throw new Error('Usage: ghost session status.');
+        const selected = database.activeSession(workspace);
+        const resolved = database.resolvedSession(workspace);
+        const candidates = database.sessions(workspace).filter(({ endedAt }) => endedAt === undefined);
+        output.write(`Workspace: ${workspace}\n`);
+        output.write(`Selected: ${selected === undefined ? 'none' : `${selected.id} (${selected.source}:${selected.sourceSessionId})`}\n`);
+        output.write(`Resolved: ${resolved === undefined ? 'none; select a session explicitly' : `${resolved.id} (${resolved.source}:${resolved.sourceSessionId})`}\n`);
+        output.write(`Open captured sessions: ${candidates.length}\n`);
+        return;
+      }
+      case 'use': {
+        const sessionId = arguments_.at(1);
+        if (sessionId === undefined || arguments_.length !== 2) throw new Error('Usage: ghost session use <id>.');
+        const selected = database.setActiveSession(workspace, sessionId);
+        output.write(`Selected ${selected.source}:${selected.sourceSessionId} for ${workspace}.\n`);
+        return;
+      }
+      default:
+        throw new Error('Usage: ghost session <list|status|use>.');
+    }
+  } finally {
+    database.close();
+  }
+}
+
+async function setup(arguments_: string[]): Promise<void> {
+  const database = await GhostDatabase.open(databasePath());
+  database.close();
+  const commands = hostCommands();
+  const [action, approval] = arguments_;
+  if (action === undefined || action === 'status') {
+    if (arguments_.length > (action === 'status' ? 1 : 0)) throw new Error('Usage: ghost setup [status|<codex|claude|gemini> --approve|remove <host> --approve].');
+    const manager = new ProviderCliManager();
+    const statuses = await manager.statuses();
+    output.write(`Ghost storage ready: ${databasePath()}\n`);
+    for (const provider of [...capturableHosts, ...unsupportedCaptureHosts]) {
+      const installed = statuses.find(({ provider: name }) => name === provider)?.installed ?? false;
+      const status = await hostCaptureStatus(provider, process.cwd(), commands);
+      const configuration = status.captureSupported
+        ? status.configured ? `capture configured at ${status.configPath}` : `capture not configured (${status.configPath})`
+        : `capture unavailable: ${status.reason}`;
+      output.write(`${provider}: ${installed ? 'CLI detected' : 'CLI not detected'}; ${configuration}\n`);
+    }
+    output.write('To modify one supported project integration, run: ghost setup <codex|claude|gemini> --approve. Codex project trust remains user-controlled.\n');
+    return;
+  }
+
+  if (action === 'remove') {
+    const host = arguments_.at(1);
+    const confirmation = arguments_.at(2);
+    if (host === undefined || confirmation !== '--approve' || arguments_.length !== 3 || !isCapturableHost(host)) {
+      throw new Error('Usage: ghost setup remove <codex|claude|gemini> --approve.');
+    }
+    const removed = await removeHostCapture(host, process.cwd(), commands);
+    output.write(removed ? `Removed GhostD ${host} capture hook from this project.\n` : `No GhostD ${host} capture hook is configured in this project.\n`);
+    return;
+  }
+
+  if (arguments_.length !== 2 || approval !== '--approve' || !isCaptureHost(action)) {
+    throw new Error('Usage: ghost setup [status|<codex|claude|gemini> --approve|remove <host> --approve].');
+  }
+  if (!isCapturableHost(action)) {
+    throw new Error(`GhostD cannot configure ${action}: no verified source-capture contract is available.`);
+  }
+  const availability = await new ProviderCliManager().status(action);
+  if (!availability.installed) {
+    throw new Error(`${availability.displayName} is not detected. GhostD will not write a hook configuration for an unavailable host.`);
+  }
+  const hookPath = await installHostCapture(action, process.cwd(), commands);
+  output.write(`GhostD ${action} capture hook installed: ${hookPath}\n`);
+  output.write(action === 'codex'
+    ? 'Approve this project in Codex before its hooks can run.\n'
+    : `GhostD captures only documented ${availability.displayName} hook events. Use ghost session list and ghost session use <id> to control the active session.\n`);
 }
 
 async function main(): Promise<void> {
@@ -560,7 +677,10 @@ async function main(): Promise<void> {
       await vscode(arguments_);
       return;
     case 'setup':
-      await setup();
+      await setup(arguments_);
+      return;
+    case 'session':
+      await session(arguments_);
       return;
     case 'codex-hook':
       await codexHook();

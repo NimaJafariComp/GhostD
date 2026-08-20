@@ -96,6 +96,66 @@ export async function installCodexHooks(workspace: string, ghostCommand: string)
   return path;
 }
 
+export async function codexHooksInstalled(workspace: string, ghostCommand: string): Promise<boolean> {
+  const path = join(workspace, '.codex', 'hooks.json');
+  let config: HookConfig;
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    if (!isHookConfig(parsed)) {
+      throw new Error('Codex hooks configuration must be a JSON object.');
+    }
+    config = parsed;
+  } catch (error: unknown) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+  return codexHookEvents.some((eventName) => (config.hooks?.[eventName] ?? [])
+    .some(({ hooks }) => hooks.some(({ type, command }) => type === 'command' && command === ghostCommand)));
+}
+
+/** Removes only Ghost's exact command; shared hook configuration and feature flags remain untouched. */
+export async function removeCodexHooks(workspace: string, ghostCommand: string): Promise<boolean> {
+  const path = join(workspace, '.codex', 'hooks.json');
+  let config: HookConfig;
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    if (!isHookConfig(parsed)) {
+      throw new Error('Codex hooks configuration must be a JSON object.');
+    }
+    config = parsed;
+  } catch (error: unknown) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+
+  let removed = false;
+  for (const eventName of codexHookEvents) {
+    const groups = config.hooks?.[eventName];
+    if (groups === undefined) continue;
+    const retained = groups
+      .map((group) => {
+        const hooks = group.hooks.filter((hook) => {
+          const matches = hook.type === 'command' && hook.command === ghostCommand;
+          removed ||= matches;
+          return !matches;
+        });
+        return { ...group, hooks };
+      })
+      .filter(({ hooks }) => hooks.length > 0);
+    if (config.hooks !== undefined) {
+      config.hooks[eventName] = retained;
+    }
+  }
+  if (removed) {
+    await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  }
+  return removed;
+}
+
 async function enableCodexHooks(configDirectory: string): Promise<void> {
   const configPath = join(configDirectory, 'config.toml');
   let config: string;

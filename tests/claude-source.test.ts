@@ -34,4 +34,12 @@ describe('ClaudeSourceAdapter', () => {
     expect(adapter.normalize({ hook_event_name: 'UnknownFutureEvent', session_id: 'claude-session' })).toEqual([]);
     expect(() => adapter.normalize({ hook_event_name: 'Stop' })).toThrow('missing session_id');
   });
+
+  it('accepts documented streamed message-display events without reading a transcript', () => {
+    const adapter = new ClaudeSourceAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'event-2');
+
+    expect(adapter.normalize({ hook_event_name: 'MessageDisplay', session_id: 'claude-session', text: 'Final answer.' })).toEqual([
+      expect.objectContaining({ type: 'assistant_message', payload: { text: 'Final answer.' } }),
+    ]);
+  });
 });

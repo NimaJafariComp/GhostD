@@ -30,17 +30,22 @@ function canonicalType(name: string): GhostEventType | undefined {
     case 'sessionend': return 'session_end';
     case 'userpromptsubmit':
     case 'usermessage': return 'user_message';
-    case 'assistantmessage': return 'assistant_message';
+    case 'assistantmessage':
+    case 'messagedisplay': return 'assistant_message';
     case 'pretooluse': return 'tool_call';
-    case 'posttooluse': return 'tool_result';
-    case 'stop': return 'turn_end';
+    case 'posttooluse':
+    case 'posttoolusefailure': return 'tool_result';
+    case 'stop':
+    case 'stopfailure':
+    case 'precompact':
+    case 'postcompact': return 'turn_end';
     default: return undefined;
   }
 }
 
 function payload(input: ClaudeHookInput, type: GhostEventType): Record<string, unknown> {
   const temporal = input['temporal'];
-  const text = stringValue(input, 'prompt', 'message', 'text', 'content');
+  const text = stringValue(input, 'prompt', 'message', 'text', 'content', 'prompt_response');
   switch (type) {
     case 'user_message':
     case 'assistant_message':

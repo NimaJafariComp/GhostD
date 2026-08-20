@@ -69,4 +69,39 @@ describe('GhostDatabase', () => {
       database.close();
     }
   });
+
+  it('keeps provider and workspace sessions distinct and requires explicit selection when concurrent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-session-test-'));
+    temporaryDirectories.push(directory);
+    const database = await GhostDatabase.open(join(directory, 'ghost.db'));
+    try {
+      const captured = (id: string, source: 'codex' | 'claude', workspace: string, type: GhostEvent['type'] = 'session_start'): GhostEvent => ({
+        ...event(id, type),
+        source,
+        sessionId: 'shared-provider-session',
+        timestamp: `2026-08-19T12:00:0${id.at(-1) ?? '0'}.000Z`,
+        workspace: { cwd: workspace },
+      });
+      database.append(captured('codex-a', 'codex', '/work/a'));
+      database.append(captured('codex-b', 'codex', '/work/b'));
+      database.append(captured('claude-a', 'claude', '/work/a'));
+
+      const workspaceSessions = database.sessions('/work/a');
+      expect(workspaceSessions).toHaveLength(2);
+      expect(new Set(workspaceSessions.map(({ id }) => id)).size).toBe(2);
+      expect(database.resolvedSession('/work/a')).toBeUndefined();
+      expect(() => database.eventsForSession('shared-provider-session')).toThrow('ambiguous');
+
+      const chosen = workspaceSessions.find(({ source }) => source === 'claude');
+      expect(chosen).toBeDefined();
+      database.setActiveSession('/work/a', chosen?.id as string);
+      expect(database.resolvedSession('/work/a')).toMatchObject({ id: chosen?.id, source: 'claude', sourceSessionId: 'shared-provider-session' });
+      expect(database.resolvedSession('/work/b')).toMatchObject({ source: 'codex', workspaceCwd: '/work/b' });
+
+      database.append(captured('claude-end', 'claude', '/work/a', 'session_end'));
+      expect(database.session(chosen?.id as string)?.endedAt).toBe('2026-08-19T12:00:0d.000Z');
+    } finally {
+      database.close();
+    }
+  });
 });

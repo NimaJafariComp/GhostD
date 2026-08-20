@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CodexAdapter } from '../src/adapters/codex/adapter.js';
-import { installCodexHooks } from '../src/adapters/codex/setup.js';
+import { installCodexHooks, removeCodexHooks } from '../src/adapters/codex/setup.js';
 import { compileContext } from '../src/context/compiler.js';
 import type { WorkspaceState } from '../src/core/events.js';
 import type { StoredEvent } from '../src/db/database.js';
@@ -117,6 +117,20 @@ describe('CodexAdapter', () => {
     expect(await readFile(configPath, 'utf8')).toBe(
       '[features]\nexperimental = true\nhooks = true # disabled\n\n[profiles.fast]\nmodel = "fast"\n',
     );
+  });
+
+  it('removes only GhostD hook commands without disabling other project hooks', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-codex-remove-'));
+    temporaryDirectories.push(directory);
+    const configDirectory = join(directory, '.codex');
+    await mkdir(configDirectory, { recursive: true });
+    const hookFile = join(configDirectory, 'hooks.json');
+    await writeFile(hookFile, JSON.stringify({ hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'existing-hook' }, { type: 'command', command: 'ghost codex-hook' }] }] } }));
+
+    await expect(removeCodexHooks(directory, 'ghost codex-hook')).resolves.toBe(true);
+    const config = JSON.parse(await readFile(hookFile, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }> > };
+    expect(config.hooks.Stop?.[0]?.hooks.map(({ command }) => command)).toEqual(['existing-hook']);
+    await expect(removeCodexHooks(directory, 'ghost codex-hook')).resolves.toBe(false);
   });
 
   it('rejects malformed hook configuration rather than overwriting it', async () => {

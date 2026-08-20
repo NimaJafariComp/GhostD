@@ -26,12 +26,17 @@ function canonicalType(input: GeminiHookInput): GhostEventType | undefined {
     case 'sessionstart': return 'session_start';
     case 'sessionend': return 'session_end';
     case 'userpromptsubmit':
-    case 'usermessage': return 'user_message';
+    case 'usermessage':
+    case 'beforeagent': return 'user_message';
     case 'assistantmessage':
-    case 'modelresponse': return 'assistant_message';
-    case 'pretooluse': return 'tool_call';
-    case 'posttooluse': return 'tool_result';
-    case 'stop': return 'turn_end';
+    case 'modelresponse':
+    case 'afteragent': return 'assistant_message';
+    case 'pretooluse':
+    case 'beforetool': return 'tool_call';
+    case 'posttooluse':
+    case 'aftertool': return 'tool_result';
+    case 'stop':
+    case 'precompress': return 'turn_end';
     default: return undefined;
   }
 }
@@ -39,7 +44,7 @@ function canonicalType(input: GeminiHookInput): GhostEventType | undefined {
 function eventPayload(input: GeminiHookInput, type: GhostEventType): Record<string, unknown> {
   const temporal = input['temporal'];
   const temporalPayload = isRecord(temporal) ? { temporal } : {};
-  const text = stringValue(input, 'prompt', 'message', 'text', 'content');
+  const text = stringValue(input, 'prompt', 'message', 'text', 'content', 'prompt_response');
   switch (type) {
     case 'user_message':
     case 'assistant_message':
