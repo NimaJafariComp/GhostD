@@ -122,14 +122,16 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.1 — Integration platform and local bridge
 
-**Status:** Planned
+**Status:** Complete
 
-- [ ] Define a versioned, authenticated, local-only bridge between the GhostD package and editor clients.
-- [ ] Scope bridge requests to a workspace and expose only capture status, captured sessions, explicit selection, provenance-bearing context, branch status, and user-initiated handoffs.
-- [ ] Keep raw hook payloads, secrets, provider credentials, hidden transcripts, provider-control operations, and automatic promotion outside the bridge.
-- [ ] Define the capability states `supported and verified`, `installed but not configured`, `configured but inactive`, and `unsupported`.
+- [x] Implement `ghost bridge serve`, a versioned authenticated local bridge over an owner-only Unix socket (or Windows named pipe). The service is local-only; endpoint configuration and registered-client credentials are persisted with owner-only permissions.
+- [x] Bind each generated editor-client credential to one normalized workspace. A credential from another workspace, a revoked credential, or an invalid token cannot enumerate sessions or read context.
+- [x] Expose only the versioned allowlist: capture status, captured-session list and explicit selection, provenance-bearing context, branch status, and read-only ACP handoff rendering. The bridge cannot ingest events, invoke a provider, expose raw payloads or credentials, modify branches, or promote code.
+- [x] Implement `ghost bridge status` without printing credentials. It reports only the local endpoint and registered-client count.
+- [x] Define and serve the capability states `supported and verified`, `installed but not configured`, `configured but inactive`, and `unsupported` using configured capture and observed workspace sessions.
+- [x] Test authentication, workspace isolation, credential rotation and revocation, private filesystem permissions, redacted context/handoffs, branch isolation, and capability reporting. Typecheck, build, full tests (65), dependency audit, and a real `ghost bridge serve`/`status` CLI smoke run pass.
 
-**Exit criterion:** Any editor client can securely discover and select already-captured sessions through one stable GhostD interface, without receiving provider secrets or claiming a session it cannot identify.
+**Exit criterion:** Met. The stable local bridge is ready for an editor client to register during setup, authenticate to its one workspace, and use only GhostD's safe read/explicit-selection surface. No VS Code client exists yet; that is Phase 7.2.
 
 ## Phase 7.2 — VS Code family and Codex workflow
 

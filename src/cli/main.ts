@@ -20,6 +20,8 @@ import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
 import { IntegrationConfigStore, integrationProviders, providerModes } from '../ecosystem/config.js';
 import type { IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
+import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer } from '../ecosystem/bridge.js';
+import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
 import { ComparisonService } from '../reasoning/service.js';
@@ -81,6 +83,8 @@ function usage(): string {
                             Record non-secret provider mode; credentials remain with the provider or environment.
   ghost acp handoff <branch> Emit a provider-neutral ACP handoff pinned to a Ghost revision.
   ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
+  ghost bridge serve         Run the authenticated local editor bridge.
+  ghost bridge status        Show local bridge status without exposing credentials.
   ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
   ghost setup                Initialize local storage and show supported host-capture status.
   ghost setup <host> --approve
@@ -155,6 +159,66 @@ async function vscode(arguments_: string[]): Promise<void> {
   if (entryPath === undefined) throw new Error('Unable to determine the Ghost CLI entry path.');
   const taskPath = await installVsCodeTasks(process.cwd(), `${quoteForShell(process.execPath)} ${quoteForShell(resolve(entryPath))}`);
   output.write(`VS Code GhostD tasks installed: ${taskPath}\n`);
+}
+
+function bridgeCapabilities(commands: Record<CapturableHost, string>): (workspaceCwd: string, sessions: readonly import('../db/database.js').CapturedSession[]) => Promise<BridgeCapability[]> {
+  return async (workspaceCwd, sessions) => {
+    const manager = new ProviderCliManager();
+    return Promise.all(providerCliNames.map(async (provider) => {
+      const availability = await manager.status(provider);
+      const capture = await hostCaptureStatus(provider, workspaceCwd, commands);
+      if (!availability.installed) {
+        return { host: provider, state: 'unsupported', reason: `${availability.displayName} CLI is not detected.` };
+      }
+      if (!capture.captureSupported) {
+        return { host: provider, state: 'unsupported', ...(capture.reason === undefined ? {} : { reason: capture.reason }) };
+      }
+      if (!capture.configured) {
+        return { host: provider, state: 'installed but not configured', ...(capture.configPath === undefined ? {} : { configPath: capture.configPath }) };
+      }
+      const hasOpenSession = sessions.some(({ source, endedAt }) => source === provider && endedAt === undefined);
+      return {
+        host: provider,
+        state: hasOpenSession ? 'supported and verified' : 'configured but inactive',
+        ...(capture.configPath === undefined ? {} : { configPath: capture.configPath }),
+      };
+    }));
+  };
+}
+
+async function bridge(arguments_: string[]): Promise<void> {
+  const action = arguments_.at(0);
+  if (action === 'status' && arguments_.length === 1) {
+    const configuration = await new LocalBridgeConfigurationStore().load();
+    if (configuration === undefined) {
+      output.write('GhostD local bridge is not configured. Run ghost bridge serve to initialize it.\n');
+      return;
+    }
+    const clients = await new LocalBridgeClientRegistry().count();
+    output.write(`GhostD local bridge endpoint: ${configuration.endpoint}\n`);
+    output.write(`Registered editor clients: ${clients}\n`);
+    output.write('Credentials are not printed.\n');
+    return;
+  }
+  if (action !== 'serve' || arguments_.length !== 1) {
+    throw new Error('Usage: ghost bridge <serve|status>.');
+  }
+  const configuration = await new LocalBridgeConfigurationStore().loadOrCreate();
+  const server = new LocalBridgeServer({
+    databasePath: databasePath(),
+    configuration,
+    clientRegistry: new LocalBridgeClientRegistry(),
+    capabilityResolver: bridgeCapabilities(hostCommands()),
+  });
+  await server.listen();
+  output.write(`GhostD local bridge listening at ${configuration.endpoint}. Credentials are never printed.\n`);
+  await new Promise<void>((resolveShutdown) => {
+    const shutdown = (): void => {
+      void server.close().finally(resolveShutdown);
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+  });
 }
 
 function quoteForShell(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -672,6 +736,9 @@ async function main(): Promise<void> {
     case 'mcp':
       if (arguments_.length !== 0) throw new Error('Usage: ghost mcp.');
       await serveMcp(databasePath(), input, output);
+      return;
+    case 'bridge':
+      await bridge(arguments_);
       return;
     case 'vscode':
       await vscode(arguments_);

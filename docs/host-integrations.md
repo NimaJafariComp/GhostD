@@ -51,7 +51,9 @@ Phase 8 packages only the integrations that have passed their associated verific
 
 ## Shared local bridge
 
-The core package must expose one versioned, local-only bridge for editor clients. It authenticates each client during setup, scopes requests to a workspace, and exposes only:
+**Phase 7.1 status: complete.** The core package exposes `ghost bridge serve`, a versioned local-only bridge over an owner-only Unix socket (or Windows named pipe). Editor setup registers a per-client, workspace-bound credential through the exported GhostD API; `ghost bridge status` intentionally never prints credentials.
+
+The bridge scopes each request to one workspace and exposes only:
 
 - capture capability and configuration state;
 - sessions already captured by documented provider adapters;
@@ -60,6 +62,8 @@ The core package must expose one versioned, local-only bridge for editor clients
 - user-initiated handoff actions.
 
 It must not expose raw secrets, provider credentials, unredacted hook payloads, hidden transcripts, provider-control operations, or automatic code promotion.
+
+The currently implemented methods are `capture/status`, `sessions/list`, `sessions/select`, `context/read`, `branches/status`, and `handoff/read`. Phase 7.2 is responsible for the first editor client that consumes this interface.
 
 ## Release gates
 
