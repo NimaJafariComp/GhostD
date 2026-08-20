@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { GeminiApiError, GeminiTargetAdapter } from '../src/adapters/gemini/target.js';
 
 describe('GeminiTargetAdapter', () => {
+  it('defaults to the model available to new Gemini API projects', () => {
+    const target = new GeminiTargetAdapter({ apiKey: 'test-key' });
+
+    expect(target.model).toBe('gemini-3.6-flash');
+  });
+
   it('uses the stateless generateContent boundary without tools or workspace access', async () => {
     const requests: Array<{ url: string; body: string }> = [];
     const target = new GeminiTargetAdapter({

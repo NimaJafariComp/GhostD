@@ -2,7 +2,9 @@ import type { AgentCapabilities } from '../../core/materialization.js';
 import type { ContextTargetAdapter, TargetRequest, TargetResult } from '../targets.js';
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+// Google keeps older models listable after they stop accepting new users.
+// Use the model Google currently directs new Gemini API projects to.
+const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 const DEFAULT_MAX_TOKENS = 1024;
 
 export interface GeminiTargetOptions {
