@@ -12,15 +12,15 @@ tap has been published. GitHub Releases are available as a private-repository
 distribution channel once a matching version tag is pushed. The commands below
 are release-operator procedures, not end-user installation claims.
 
-## GitHub Releases and private installation
+## GitHub Releases and authenticated installation
 
 Pushing a tag matching the package version, such as `v0.1.0`, runs the release
 workflow. It verifies the project, creates the npm tarball and SHA-256 file,
 performs a fresh isolated install test, packages the VS Code extension, and
 creates a GitHub Release containing those assets.
 
-For a private repository, download release assets through an authenticated GitHub
-CLI session. This avoids placing a token in an install URL or package config:
+While the repository is private, download release assets through an authenticated
+GitHub CLI session. This avoids placing a token in an install URL or package config:
 
 ```sh
 gh auth login

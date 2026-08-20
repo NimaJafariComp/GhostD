@@ -96,7 +96,7 @@ GhostD does **not** scrape a chat UI, read hidden transcripts, inspect window fo
 Until a GitHub Release is tagged, install from this checkout:
 
 ```sh
-git clone git@github.com:NimaJafariComp/GhostD.git
+git clone https://github.com/NimaJafariComp/GhostD.git
 cd GhostD
 npm ci
 npm run build
@@ -194,7 +194,7 @@ Promotion is explicit, fast-forward-only, and never resolves conflicts or writes
 
 ### 🖥️ Inspect from VS Code
 
-The GhostD VS Code extension connects to the owner-only local bridge. It shows capture state, allows explicit session selection, renders safe context, copies handoffs, and can disconnect/revoke its workspace-bound credential.
+The GhostD VS Code extension connects to an authenticated local bridge. It shows capture state, allows explicit session selection, renders safe context, copies handoffs, and can disconnect/revoke its workspace-bound credential.
 
 It does not read editor text, chat transcripts, credentials, process titles, or window focus.
 
@@ -231,9 +231,9 @@ Read the detailed [host integration matrix](docs/host-integrations.md) before cl
 | Homebrew formula | macOS/Linux installer formula | Generator is ready; a public npm package and dedicated tap are still required |
 | npm registry package | `npm install --global ghostd` | Not published yet |
 
-### Install from a private GitHub Release
+### Install from a GitHub Release
 
-After a matching tag has created a release, download the tarball with an authenticated GitHub CLI session. This avoids credentials in URLs or package configuration.
+After a matching tag creates a release, download the tarball. If the repository is private, authenticate GitHub CLI first. This keeps credentials out of URLs and package configuration.
 
 ```sh
 gh auth login
@@ -363,7 +363,7 @@ ghost hosts
 
 - [Host integration matrix](docs/host-integrations.md) — verified host scope, adapter boundaries, and explicit non-support.
 - [Host contract discovery](docs/host-contract-discovery.md) — why unsupported desktop hosts are handoff-only.
-- [Release guide](docs/releasing.md) — private GitHub Release installs, npm, Homebrew tap generation, and release verification.
+- [Release guide](docs/releasing.md) — GitHub Release installs, npm, Homebrew tap generation, and release verification.
 - [Implementation phases](phases.md) — roadmap, invariants, and evidence.
 - [VS Code extension guide](extensions/vscode/README.md) — connect, configure, disconnect, and develop the workspace extension.
 
@@ -371,6 +371,6 @@ ghost hosts
 
 ## License and status
 
-GhostD is licensed under [Apache-2.0](LICENSE) and the repository is currently private. It is not published to the npm registry or a Homebrew tap. The GitHub Release workflow is ready to distribute versioned private release assets after a matching tag is pushed.
+GhostD is licensed under [Apache-2.0](LICENSE). The repository is currently private and is not published to npm, a Homebrew tap, or an extension marketplace. GitHub Release assets require authentication while the repository remains private.
 
-Before a public npm package, Homebrew tap, or Marketplace listing, complete the relevant host and release gates. See [NOTICE](NOTICE) and [the release guide](docs/releasing.md).
+Before publishing the repository, npm package, Homebrew tap, or Marketplace listing, complete the relevant host and release gates. See [NOTICE](NOTICE) and [the release guide](docs/releasing.md).
