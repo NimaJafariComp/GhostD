@@ -14,6 +14,7 @@ exports.run = async () => {
     'ghostd.selectSession',
     'ghostd.showContext',
     'ghostd.copyHandoff',
+    'ghostd.showDetectedHosts',
     'ghostd.disconnect',
     'ghostd.refresh',
   ]) {

@@ -2,7 +2,7 @@
   "name": "ghostd-vscode",
   "displayName": "GhostD",
   "description": "Inspect and select captured GhostD sessions from VS Code.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "publisher": "ghostd",
   "license": "Apache-2.0",
@@ -37,6 +37,7 @@
     "onCommand:ghostd.selectSession",
     "onCommand:ghostd.showContext",
     "onCommand:ghostd.copyHandoff",
+    "onCommand:ghostd.showDetectedHosts",
     "onCommand:ghostd.refresh"
   ],
   "contributes": {
@@ -68,6 +69,10 @@
       {
         "command": "ghostd.copyHandoff",
         "title": "GhostD: Copy branch handoff"
+      },
+      {
+        "command": "ghostd.showDetectedHosts",
+        "title": "GhostD: Show detected IDE agent hosts"
       },
       {
         "command": "ghostd.disconnect",

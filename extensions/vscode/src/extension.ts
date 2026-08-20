@@ -23,6 +23,35 @@ interface SessionState {
   capabilities: string[];
 }
 
+interface DetectedAgentHost {
+  name: string;
+  extensionId: string;
+  version: string;
+  capture: 'supported' | 'unavailable';
+  detail: string;
+}
+
+const knownAgentExtensions: ReadonlyArray<Omit<DetectedAgentHost, 'version'>> = [
+  {
+    name: 'Gemini Code Assist',
+    extensionId: 'google.geminicodeassist',
+    capture: 'unavailable',
+    detail: 'Detected, but this extension exposes no public session-event or lifecycle-hook API. GhostD will not read its private chat or storage.',
+  },
+  {
+    name: 'Codex',
+    extensionId: 'openai.chatgpt',
+    capture: 'supported',
+    detail: 'Detected. Configure the documented Codex project hook to capture sessions.',
+  },
+  {
+    name: 'Claude Code',
+    extensionId: 'anthropic.claude-code',
+    capture: 'supported',
+    detail: 'Detected. Configure the documented Claude Code project hook to capture sessions.',
+  },
+];
+
 class GhostSessionItem extends vscode.TreeItem {
   public constructor(readonly session: CapturedSession, selected: boolean, resolved: boolean) {
     super(`${session.source}: ${session.sourceSessionId}`, vscode.TreeItemCollapsibleState.None);
@@ -170,7 +199,14 @@ class GhostdController implements vscode.Disposable {
         this.setStatus('$(warning) GhostD: Select session', 'More than one session is active, or no session is selected. Click to choose one.', 'ghostd.selectSession');
       } else {
         const codex = capabilities.find((capability) => capability === 'codex: installed but not configured');
-        this.setStatus('$(circle-outline) GhostD: No capture', codex === undefined ? 'No captured sessions in this workspace.' : 'Codex is installed but GhostD capture is not configured.', codex === undefined ? 'ghostd.refresh' : 'ghostd.configureCodex');
+        const unavailableHost = this.detectedAgentHosts().find(({ capture }) => capture === 'unavailable');
+        this.setStatus(
+          unavailableHost === undefined ? '$(circle-outline) GhostD: No capture' : `$(info) GhostD: ${unavailableHost.name} detected`,
+          unavailableHost === undefined
+            ? codex === undefined ? 'No captured sessions in this workspace.' : 'Codex is installed but GhostD capture is not configured.'
+            : unavailableHost.detail,
+          unavailableHost === undefined ? codex === undefined ? 'ghostd.refresh' : 'ghostd.configureCodex' : 'ghostd.showDetectedHosts',
+        );
       }
     } catch (error: unknown) {
       this.sessions.setState(undefined, 'GhostD bridge is unavailable. Reconnect this workspace to recover.');
@@ -216,6 +252,19 @@ class GhostdController implements vscode.Disposable {
     if (handoff === undefined) throw new Error('GhostD bridge returned an invalid handoff response.');
     await vscode.env.clipboard.writeText(JSON.stringify(handoff, null, 2));
     vscode.window.showInformationMessage(`GhostD copied the ${branch.trim()} handoff. No provider was invoked.`);
+  }
+
+  public async showDetectedHosts(): Promise<void> {
+    const detected = this.detectedAgentHosts();
+    if (detected.length === 0) {
+      vscode.window.showInformationMessage('GhostD did not detect a known IDE agent extension in this VS Code host.');
+      return;
+    }
+    await vscode.window.showQuickPick(detected.map((host) => ({
+      label: host.name,
+      description: `${host.extensionId} v${host.version} · capture ${host.capture}`,
+      detail: host.detail,
+    })), { placeHolder: 'Detected IDE agent hosts. Detection never reads chat data.' });
   }
 
   public async disconnect(): Promise<void> {
@@ -333,6 +382,15 @@ class GhostdController implements vscode.Disposable {
     return vscode.workspace.getConfiguration('ghostd', workspace.uri).get<string>('cliPath', 'ghost');
   }
 
+  private detectedAgentHosts(): DetectedAgentHost[] {
+    return knownAgentExtensions.flatMap((known) => {
+      const extension = vscode.extensions.getExtension(known.extensionId);
+      if (extension === undefined) return [];
+      const version = typeof extension.packageJSON['version'] === 'string' ? extension.packageJSON['version'] : 'unknown';
+      return [{ ...known, version }];
+    });
+  }
+
   /**
    * VS Code's GUI extension host does not inherit every terminal shell path.
    * An explicit, absolute host CLI path is opt-in and only used while GhostD
@@ -378,6 +436,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('ghostd.selectSession', (session?: CapturedSession) => controller.selectSession(session).catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.showContext', () => controller.showContext().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.copyHandoff', () => controller.copyHandoff().catch((error: unknown) => showCommandError(error))),
+    vscode.commands.registerCommand('ghostd.showDetectedHosts', () => controller.showDetectedHosts().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.disconnect', () => controller.disconnect().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.refresh', () => controller.refresh().catch((error: unknown) => showCommandError(error))),
     vscode.window.onDidChangeActiveTextEditor(() => { void controller.refresh(); }),

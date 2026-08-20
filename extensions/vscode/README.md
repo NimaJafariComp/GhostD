@@ -13,6 +13,10 @@ This extension is the workspace UI for a locally installed GhostD CLI. It does n
 
 The extension can show redacted, provenance-bearing context and copy a branch handoff. It never reads chat panes, provider transcripts, editor text, credentials, window titles, or process state. It captures only documented lifecycle hook events emitted by the configured host.
 
+## IDE-native agent detection
+
+GhostD detects known agent extensions installed in the current VS Code-compatible host. Run **GhostD: Show detected IDE agent hosts** to inspect them. Detection is not capture: a host must expose a documented lifecycle API before GhostD can construct a live session from it. For example, GhostD recognizes Gemini Code Assist but reports its capture state as unavailable because it exposes no public session-event or hook contract.
+
 ## Removal
 
 Run **GhostD: Disconnect this workspace** to revoke the extension credential and remove its private credential file. Removing the extension alone never removes a provider hook; use `ghost setup remove <host> --approve` for that explicit action.
