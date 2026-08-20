@@ -19,6 +19,7 @@ import { acpHandoff } from '../acp/handoff.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
+import { inspectDoctorStorage, renderDoctorReport } from '../distribution/doctor.js';
 import { IntegrationConfigStore, answerProviders, integrationProviders, providerModes } from '../ecosystem/config.js';
 import type { AnswerProvider, IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
 import { desktopHostContract, desktopHostContracts, desktopHostIds } from '../ecosystem/host-contracts.js';
@@ -94,6 +95,7 @@ function usage(): string {
   ghost providers           Report which supported provider CLIs are installed.
   ghost providers install <codex|claude|gemini|missing>
                             Install selected missing provider CLIs from their official npm packages.
+  ghost doctor              Read-only installation, capture, and recovery diagnostics.
   ghost configure <codex|claude|gemini|antigravity> <subscription|api>
                             Record non-secret provider mode; credentials remain with the provider or environment.
   ghost configure default <codex|claude|gemini>
@@ -166,6 +168,28 @@ async function providers(arguments_: string[]): Promise<void> {
   }
   const status = await manager.install(provider);
   output.write(`${status.displayName} is installed. Sign in through its CLI before using it.\n`);
+}
+
+async function doctor(arguments_: string[]): Promise<void> {
+  if (arguments_.length !== 0) throw new Error('Usage: ghost doctor.');
+  const commands = hostCommands();
+  const manager = new ProviderCliManager();
+  const [storage, providerStatuses, configuration, captures] = await Promise.all([
+    inspectDoctorStorage(databasePath()),
+    manager.statuses(),
+    new IntegrationConfigStore().load(),
+    Promise.all(capturableHosts.map((host) => hostCaptureStatus(host, process.cwd(), commands))),
+  ]);
+  output.write(renderDoctorReport({
+    nodeVersion: process.version,
+    platform: process.platform,
+    architecture: process.arch,
+    workspace: process.cwd(),
+    storage,
+    providers: providerStatuses,
+    captures,
+    configuration,
+  }));
 }
 
 async function configure(arguments_: string[]): Promise<void> {
@@ -966,6 +990,9 @@ async function main(): Promise<void> {
       return;
     case 'providers':
       await providers(arguments_);
+      return;
+    case 'doctor':
+      await doctor(arguments_);
       return;
     case 'configure':
       await configure(arguments_);

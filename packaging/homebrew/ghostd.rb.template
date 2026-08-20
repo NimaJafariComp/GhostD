@@ -1,0 +1,17 @@
+class Ghostd < Formula
+  desc "Local-first context runtime for developer-agent workflows"
+  homepage "https://github.com/NimaJafariComp/GhostD"
+  url "https://registry.npmjs.org/ghostd/-/ghostd-{{VERSION}}.tgz"
+  sha256 "{{SHA256}}"
+
+  depends_on "node"
+
+  def install
+    libexec.install Dir["*"]
+    bin.write_exec_script libexec/"dist/cli/main.js"
+  end
+
+  test do
+    assert_match "GhostD doctor (read-only)", shell_output("#{bin}/ghostd doctor")
+  end
+end

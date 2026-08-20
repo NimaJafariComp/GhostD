@@ -1,20 +1,61 @@
 {
   "name": "ghostd",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local-first, revision-pinned context for developer agents.",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/NimaJafariComp/GhostD",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NimaJafariComp/GhostD.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NimaJafariComp/GhostD/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "codex",
+    "claude",
+    "gemini",
+    "developer-tools",
+    "context"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "workspaces": [
     "extensions/vscode"
   ],
-  "description": "A local runtime for reconstructing transferable developer context.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "ghost": "./dist/cli/main.js",
     "ghostd": "./dist/cli/main.js"
   },
+  "files": [
+    "dist",
+    "integrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run build --workspace ghostd-vscode",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace ghostd-vscode",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:package": "node scripts/verify-package.mjs",
+    "release:verify": "npm run typecheck && npm run build && npm test && npm run verify:package",
+    "release:artifact": "node scripts/create-release-artifact.mjs",
+    "release:formula": "node scripts/render-homebrew-formula.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

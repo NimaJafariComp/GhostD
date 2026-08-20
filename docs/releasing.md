@@ -1,0 +1,85 @@
+# GhostD release and installation policy
+
+## Supported release channels
+
+The intended channels are npm for every supported Node platform and a dedicated
+Homebrew tap for macOS and Linux. Homebrew Core is deliberately out of scope
+until GhostD is public, licensed for redistribution, stable, and meets
+Homebrew's formula requirements.
+
+The current repository is `UNLICENSED` and no npm package or Homebrew tap has
+been published. The commands below are release-operator procedures, not
+end-user installation claims.
+
+## Compatibility policy
+
+GhostD follows semantic versioning:
+
+- Patch releases preserve canonical-ledger and CLI behavior.
+- Minor releases may add compatible commands, capture fields, and migrations.
+- Major releases may change public CLI or SDK contracts and must include an
+  explicit migration and recovery guide.
+
+The canonical event envelope and SQLite migrations are append-only. A newer
+build must either open existing local history safely or refuse with a clear
+recovery instruction; it must never rewrite history. Downgrades are supported
+only across releases whose migration notes explicitly say so. Users keep a copy
+of `~/.ghost` before any manual downgrade.
+
+## Platform matrix
+
+The Node package supports Node 22.5 or later on the following test targets:
+
+| Platform | Architectures | Release channel |
+| --- | --- | --- |
+| macOS | arm64, x64 | npm; dedicated Homebrew tap after publication |
+| Linux | x64, arm64 | npm; dedicated Homebrew tap after publication |
+| Windows | x64 | npm |
+
+Provider CLIs, provider login, and host-capture verification are separate from
+GhostD installation. The host matrix remains the source of truth for what may
+be advertised as captured: [host integrations](host-integrations.md).
+
+## Release verification
+
+1. Run `npm ci` and `npm run release:verify` on each platform in the matrix.
+   The GitHub workflow performs this baseline check.
+2. Run `npm run release:artifact -- ./release-artifacts` to create the npm
+   tarball and its SHA-256 file. Preserve both as immutable release assets.
+3. In a clean temporary prefix, install the tarball with npm, run `ghost
+   doctor`, `ghost --help`, and confirm that a missing provider produces a
+   recoverable error without creating a provider credential or host hook.
+4. Upgrade the temporary prefix from the previous supported release to the
+   candidate, run `ghost doctor`, then restore the previous release only when
+   that release's migration notes declare downgrade support. Keep the ledger
+   backup throughout this test.
+5. Uninstall the temporary package and verify that provider configuration and
+   `~/.ghost` history remain untouched unless the user explicitly removes them.
+6. Publish the exact verified tarball with an authorized npm account. Never put
+   an npm token, provider key, or provider login in this repository or a build
+   artifact.
+
+## Dedicated Homebrew tap
+
+After the npm tarball is published, render a formula using the *published*
+tarball checksum:
+
+```sh
+npm run release:formula -- \
+  --version 0.1.0 \
+  --sha256 <published-tarball-sha256> \
+  --output /path/to/homebrew-tap/Formula/ghostd.rb
+```
+
+Commit that rendered formula to the dedicated tap and test `brew install
+<owner>/tap/ghostd` plus `ghostd doctor` on macOS and Linux. Do not publish the
+template itself as a formula: placeholders are intentionally invalid until a
+released tarball and checksum exist.
+
+## Installer safety contract
+
+Installing GhostD only installs the package. It does not collect credentials,
+perform provider login, grant Codex trust, install hooks, inspect transcripts,
+or mutate a workspace. `ghost doctor` is read-only. Host capture requires
+`ghost setup <host> --approve` in the intended workspace, and Codex trust
+remains an independent user decision.

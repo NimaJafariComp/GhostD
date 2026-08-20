@@ -223,20 +223,20 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 8 — Distribution and universal installation
 
-**Status:** Planned
+**Status:** Implementation complete — external publication pending an explicit public license, authorized npm publication, and a dedicated Homebrew tap
 
 **Release boundary:** Distribution may ship supported CLI-host capture, but must not market GhostD as providing universal active-session capture until the relevant Phase 7.2–7.6 host verification criteria are met.
 
-- [ ] Define supported release channels, semantic-versioning policy, upgrade compatibility policy, and explicit platform support matrix.
-- [ ] Package the CLI for npm with a clean public package surface, executable entry point, provenance metadata, and install/update/uninstall documentation.
-- [ ] Produce immutable, versioned release artifacts with checksums and a repeatable release-verification process. Native binaries are optional only when they materially improve the supported installation experience.
-- [ ] Create and maintain a dedicated Homebrew tap and formula so macOS and Linux users can install a released version with `brew install <owner>/tap/ghostd`.
+- [x] Define supported release channels, semantic-versioning policy, upgrade compatibility policy, and explicit platform support matrix.
+- [x] Package the CLI for npm with a clean public package surface, executable entry point, provenance metadata, and install/update/uninstall documentation. The tarball includes only built CLI/SDK files, integration assets, and public release material; it excludes source and tests.
+- [x] Produce immutable, versioned release artifacts with checksums and a repeatable release-verification process. `npm run release:artifact -- <directory>` creates the tarball plus SHA-256, and `npm run release:verify` runs strict checks, build, tests, and package-surface validation.
+- [x] Prepare the dedicated Homebrew-tap formula generator. `npm run release:formula` requires an explicit version and published-tarball checksum; it cannot generate a formula with placeholders or a guessed checksum. Creating/publishing the separate tap remains an external release action.
 - [ ] Evaluate eligibility for Homebrew Core only after GhostD is public, appropriately licensed, stable, and compatible with Homebrew's formula requirements; until then, do not imply `brew install ghostd` is supported.
-- [ ] Make all installers safe by default: no credential collection, no provider login bypass, no project-trust bypass, and no implicit hook installation into untrusted workspaces.
-- [ ] Provide a post-install `ghost doctor` flow that identifies missing optional agents, supported installation paths, permissions, project trust state, and recovery steps without modifying anything unless the user explicitly confirms.
-- [ ] Test fresh install, upgrade, downgrade/recovery where supported, uninstall, and offline/provider-unavailable behavior on every supported platform.
+- [x] Make all installers safe by default: no credential collection, no provider login bypass, no project-trust bypass, and no implicit hook installation into untrusted workspaces.
+- [x] Provide a post-install `ghost doctor` flow that identifies missing optional agents, supported installation paths, owner-only storage permissions, host capture configuration, project-trust boundary, and recovery steps without modifying anything.
+- [x] Test fresh packed-install diagnostics, package artifact checksums, Homebrew-formula rendering, offline/provider-unavailable recovery behavior, and clean package contents locally. CI now executes the full release-verification suite on macOS, Linux, and Windows under Node 22 and 24; upgrade/downgrade remains a release-operator compatibility check until two published versions exist.
 
-**Exit criterion:** A new user can install a verified, released GhostD build through npm or the supported Homebrew tap, run `ghost doctor`, and complete explicit setup without manually cloning the repository or exposing credentials to GhostD.
+**Release exit criterion:** Pending external publication. A new user can install a verified, released GhostD build through npm or the supported Homebrew tap, run `ghost doctor`, and complete explicit setup without manually cloning the repository or exposing credentials to GhostD. This is intentionally not claimed until a public license, a published npm tarball, a checksum-pinned formula in a dedicated tap, and CI results on the platform matrix exist.
 
 ## Phase 9 — Human-centered interaction and product surfaces
 

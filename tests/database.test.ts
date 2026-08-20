@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,6 +28,19 @@ function event(id: string, type: GhostEvent['type'] = 'user_message'): GhostEven
 }
 
 describe('GhostDatabase', () => {
+  it('keeps the Ghost storage directory owner-only', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-private-storage-'));
+    temporaryDirectories.push(directory);
+    const storageDirectory = join(directory, 'ghost');
+    const database = await GhostDatabase.open(join(storageDirectory, 'ghost.db'));
+
+    try {
+      expect((await stat(storageDirectory)).mode & 0o777).toBe(0o700);
+    } finally {
+      database.close();
+    }
+  });
+
   it('stores events in append-only session order', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'ghostd-test-'));
     temporaryDirectories.push(directory);

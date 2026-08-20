@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { chmod, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -287,7 +287,9 @@ export class GhostDatabase {
   }
 
   public static async open(path: string): Promise<GhostDatabase> {
-    await mkdir(dirname(path), { recursive: true });
+    const directory = dirname(path);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
     return new GhostDatabase(path);
   }
 
