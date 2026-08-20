@@ -87,11 +87,11 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 5 — Write-capable branches
 
-**Status:** Not started
+**Status:** Complete
 
-- [ ] Add isolated Git worktrees for explicit write-capable replicas.
-- [ ] Track patch provenance, branch cleanup, and concurrent-agent safety.
-- [ ] Compare implementations and selectively promote user-approved code changes.
+- [x] Add isolated Git worktrees for explicit write-capable replicas. Creation requires a clean repository at the exact Git commit captured by the Ghost revision; worktrees live under GhostD’s managed root and use a deterministic per-branch Git ref.
+- [x] Track patch provenance, branch cleanup, and concurrent-agent safety. GhostD persists only commit ranges, changed-file counts, and SHA-256 patch identities—never patch contents—and retains the Git branch and audit history when a clean worktree is closed. Database uniqueness plus Git’s branch/worktree locking permits only one active replica per Ghost branch.
+- [x] Compare implementations and selectively promote user-approved code changes. `ghost worktree diff <branch>` renders an unpersisted review diff; `ghost worktree promote <branch> <target-git-branch> --approve` requires a clean source and target, the named target checked out, and a fast-forward-only merge. It never resolves conflicts or promotes automatically.
 
 ## Phase 6 — Ecosystem integrations
 
@@ -101,3 +101,4 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [ ] Add MCP as an interface to Ghost, not the Ghost core.
 - [ ] Publish the adapter SDK and compatibility ladder.
 - [ ] Add IDE/editor integrations only after CLI fidelity is proven.
+- [ ] antigravity integration.

@@ -17,6 +17,7 @@ import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
 import { MaterializationService } from '../materialization/service.js';
 import { ComparisonService } from '../reasoning/service.js';
+import { WriteBranchService } from '../write/service.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
@@ -44,6 +45,16 @@ function usage(): string {
                             Explicitly fast-forward a same-session target branch.
   ghost switch <codex|claude|gemini> <branch>
                             Record and render a provider-independent continuation handoff.
+  ghost worktree create <branch>
+                            Create an isolated Git worktree for an open Ghost branch.
+  ghost worktree status <branch>
+                            Show worktree cleanliness, diff summary, and patch provenance.
+  ghost worktree diff <branch>
+                            Print an unpersisted Git diff for review.
+  ghost worktree promote <branch> <target-git-branch> --approve
+                            Explicitly fast-forward a reviewed committed patch into the checked-out target.
+  ghost worktree close <branch>
+                            Remove a clean Ghost-managed worktree while preserving its Git branch and audit history.
   ghost providers           Report which supported provider CLIs are installed.
   ghost providers install <codex|claude|gemini|missing>
                             Install selected missing provider CLIs from their official npm packages.
@@ -323,6 +334,71 @@ async function switchAgent(arguments_: string[]): Promise<void> {
   }
 }
 
+async function worktree(arguments_: string[]): Promise<void> {
+  const action = arguments_.at(0);
+  const branchName = arguments_.at(1);
+  if (action === undefined || branchName === undefined) {
+    throw new Error('Usage: ghost worktree <create|status|diff|promote|close> <branch>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  const service = new WriteBranchService(database);
+  try {
+    switch (action) {
+      case 'create': {
+        if (arguments_.length !== 2) {
+          throw new Error('Usage: ghost worktree create <branch>.');
+        }
+        const created = await service.create(branchName);
+        output.write(`Created write worktree for ${branchName}: ${created.worktreePath}\nGit branch: ${created.gitBranch}\nBase commit: ${created.baseCommit}\n`);
+        return;
+      }
+      case 'status': {
+        if (arguments_.length !== 2) {
+          throw new Error('Usage: ghost worktree status <branch>.');
+        }
+        const status = await service.status(branchName);
+        output.write(
+          `Worktree: ${status.worktree.worktreePath}\nGit branch: ${status.worktree.gitBranch}\n`
+          + `HEAD: ${status.headCommit}\n${status.isClean ? 'Clean' : 'Dirty'}; ${status.changedFileCount} committed file${status.changedFileCount === 1 ? '' : 's'} changed from base.\n`
+          + `${status.diffStat.length === 0 ? 'No committed diff.' : status.diffStat}\n`
+          + `Patch provenance records: ${status.patches.length}\n`,
+        );
+        return;
+      }
+      case 'diff': {
+        if (arguments_.length !== 2) {
+          throw new Error('Usage: ghost worktree diff <branch>.');
+        }
+        const diff = await service.diff(branchName);
+        output.write(diff.length === 0 ? 'No committed diff.\n' : `${diff}\n`);
+        return;
+      }
+      case 'promote': {
+        const targetGitBranch = arguments_.at(2);
+        const approval = arguments_.at(3);
+        if (targetGitBranch === undefined || approval !== '--approve' || arguments_.length !== 4) {
+          throw new Error('Usage: ghost worktree promote <branch> <target-git-branch> --approve.');
+        }
+        const promotion = await service.promote(branchName, targetGitBranch, true);
+        output.write(`Promoted ${branchName} into ${promotion.targetGitBranch} at ${promotion.targetAfterCommit}.\n`);
+        return;
+      }
+      case 'close': {
+        if (arguments_.length !== 2) {
+          throw new Error('Usage: ghost worktree close <branch>.');
+        }
+        await service.close(branchName);
+        output.write(`Closed write worktree for ${branchName}; Git branch and Ghost audit history remain preserved.\n`);
+        return;
+      }
+      default:
+        throw new Error('Usage: ghost worktree <create|status|diff|promote|close> <branch>.');
+    }
+  } finally {
+    database.close();
+  }
+}
+
 async function codexHook(): Promise<void> {
   const contents = await readIngestInput(undefined);
   let rawEvent: unknown;
@@ -424,6 +500,9 @@ async function main(): Promise<void> {
       return;
     case 'switch':
       await switchAgent(arguments_);
+      return;
+    case 'worktree':
+      await worktree(arguments_);
       return;
     case 'providers':
       await providers(arguments_);

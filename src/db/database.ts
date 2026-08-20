@@ -32,6 +32,11 @@ import type {
   InsightKind,
   InsightPayload,
 } from '../core/reasoning.js';
+import type {
+  PatchProvenance,
+  WritePromotion,
+  WriteWorktree,
+} from '../core/write.js';
 import { redactEvent, redactText } from '../privacy/redaction.js';
 
 export interface StoredEvent extends GhostEvent {
@@ -190,6 +195,39 @@ interface AgentSwitchRow {
   branch_id: string;
   target_agent: string;
   revision_id: string;
+  created_at: string;
+}
+
+interface WriteWorktreeRow {
+  id: string;
+  branch_id: string;
+  repository_path: string;
+  worktree_path: string;
+  git_branch: string;
+  base_commit: string;
+  lifecycle: WriteWorktree['lifecycle'];
+  created_at: string;
+  closed_at: string | null;
+}
+
+interface PatchProvenanceRow {
+  id: string;
+  worktree_id: string;
+  base_commit: string;
+  head_commit: string;
+  diff_sha256: string;
+  changed_file_count: number;
+  created_at: string;
+}
+
+interface WritePromotionRow {
+  id: string;
+  worktree_id: string;
+  patch_id: string;
+  target_git_branch: string;
+  source_commit: string;
+  target_before_commit: string;
+  target_after_commit: string;
   created_at: string;
 }
 
@@ -990,6 +1028,151 @@ export class GhostDatabase {
     return rows.map(agentSwitchFromRow);
   }
 
+  /** Stores lifecycle metadata only; the Git worktree is created by the write service first. */
+  public createWriteWorktree(input: Omit<WriteWorktree, 'lifecycle' | 'closedAt'>): WriteWorktree {
+    const branch = this.branchById(input.branchId);
+    if (branch === undefined || branch.lifecycle !== 'open') {
+      throw new Error('A write worktree requires an open Ghost branch.');
+    }
+    const existing = this.writeWorktreeForBranch(branch.name);
+    if (existing !== undefined) {
+      throw new Error(`Branch ${branch.name} already has a write worktree.`);
+    }
+    const worktree: WriteWorktree = { ...input, lifecycle: 'active' };
+    this.database
+      .prepare(
+        `INSERT INTO write_worktrees (
+           id, branch_id, repository_path, worktree_path, git_branch, base_commit, lifecycle, created_at, closed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(
+        worktree.id,
+        worktree.branchId,
+        worktree.repositoryPath,
+        worktree.worktreePath,
+        worktree.gitBranch,
+        worktree.baseCommit,
+        worktree.lifecycle,
+        worktree.createdAt,
+      );
+    return worktree;
+  }
+
+  public writeWorktreeForBranch(name: string): WriteWorktree | undefined {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      return undefined;
+    }
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, repository_path, worktree_path, git_branch, base_commit, lifecycle, created_at, closed_at
+         FROM write_worktrees WHERE branch_id = ?`,
+      )
+      .get(branch.id) as WriteWorktreeRow | undefined;
+    return row === undefined ? undefined : writeWorktreeFromRow(row);
+  }
+
+  public closeWriteWorktree(name: string, closedAt = new Date().toISOString()): WriteWorktree {
+    const worktree = this.writeWorktreeForBranch(name);
+    if (worktree === undefined) {
+      throw new Error(`Branch ${name} has no write worktree.`);
+    }
+    if (worktree.lifecycle === 'closed') {
+      return worktree;
+    }
+    this.database.prepare('UPDATE write_worktrees SET lifecycle = ?, closed_at = ? WHERE id = ?').run('closed', closedAt, worktree.id);
+    return { ...worktree, lifecycle: 'closed', closedAt };
+  }
+
+  /** Stores a reproducible patch hash and commit range, never the patch contents. */
+  public recordPatchProvenance(input: Omit<PatchProvenance, 'id'>): PatchProvenance {
+    const worktree = this.writeWorktreeById(input.worktreeId);
+    if (worktree === undefined) {
+      throw new Error(`Write worktree ${input.worktreeId} does not exist.`);
+    }
+    if (worktree.baseCommit !== input.baseCommit) {
+      throw new Error('Patch provenance must use the write worktree’s captured base commit.');
+    }
+    const existing = this.database
+      .prepare(
+        `SELECT id, worktree_id, base_commit, head_commit, diff_sha256, changed_file_count, created_at
+         FROM patch_provenance WHERE worktree_id = ? AND head_commit = ?`,
+      )
+      .get(input.worktreeId, input.headCommit) as PatchProvenanceRow | undefined;
+    if (existing !== undefined) {
+      return patchProvenanceFromRow(existing);
+    }
+    const patch: PatchProvenance = { id: randomUUID(), ...input };
+    this.database
+      .prepare(
+        `INSERT INTO patch_provenance (
+           id, worktree_id, base_commit, head_commit, diff_sha256, changed_file_count, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(patch.id, patch.worktreeId, patch.baseCommit, patch.headCommit, patch.diffSha256, patch.changedFileCount, patch.createdAt);
+    return patch;
+  }
+
+  public patchProvenanceForBranch(name: string): PatchProvenance[] {
+    const worktree = this.writeWorktreeForBranch(name);
+    if (worktree === undefined) {
+      return [];
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, worktree_id, base_commit, head_commit, diff_sha256, changed_file_count, created_at
+         FROM patch_provenance WHERE worktree_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(worktree.id) as unknown as PatchProvenanceRow[];
+    return rows.map(patchProvenanceFromRow);
+  }
+
+  /** Records only a completed fast-forward. Calling code must require explicit user approval before Git mutation. */
+  public recordWritePromotion(input: Omit<WritePromotion, 'id' | 'status' | 'failureCode' | 'completedAt' | 'targetAfterCommit'> & { targetAfterCommit: string }): WritePromotion {
+    const worktree = this.writeWorktreeById(input.worktreeId);
+    if (worktree === undefined) {
+      throw new Error(`Write worktree ${input.worktreeId} does not exist.`);
+    }
+    const patch = this.database
+      .prepare('SELECT id FROM patch_provenance WHERE id = ? AND worktree_id = ?')
+      .get(input.patchId, input.worktreeId) as { id: string } | undefined;
+    if (patch === undefined) {
+      throw new Error('Write promotion must reference patch provenance from the same worktree.');
+    }
+    const promotion: WritePromotion = { id: randomUUID(), ...input, status: 'succeeded', completedAt: input.createdAt };
+    this.database
+      .prepare(
+        `INSERT INTO write_promotions (
+           id, worktree_id, patch_id, target_git_branch, source_commit, target_before_commit, target_after_commit, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        promotion.id,
+        promotion.worktreeId,
+        promotion.patchId,
+        promotion.targetGitBranch,
+        promotion.sourceCommit,
+        promotion.targetBeforeCommit,
+        input.targetAfterCommit,
+        promotion.createdAt,
+      );
+    return promotion;
+  }
+
+  public writePromotionsForBranch(name: string): WritePromotion[] {
+    const worktree = this.writeWorktreeForBranch(name);
+    if (worktree === undefined) {
+      return [];
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, worktree_id, patch_id, target_git_branch, source_commit, target_before_commit, target_after_commit, created_at
+         FROM write_promotions WHERE worktree_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(worktree.id) as unknown as WritePromotionRow[];
+    return rows.map(writePromotionFromRow);
+  }
+
   public startMaterializationRun(input: StartMaterializationRun): MaterializationRun {
     const branch = this.branchById(input.branchId);
     if (branch === undefined) {
@@ -1139,6 +1322,16 @@ export class GhostDatabase {
       )
       .get(id) as BranchRow | undefined;
     return row === undefined ? undefined : branchFromRow(row);
+  }
+
+  private writeWorktreeById(id: string): WriteWorktree | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, repository_path, worktree_path, git_branch, base_commit, lifecycle, created_at, closed_at
+         FROM write_worktrees WHERE id = ?`,
+      )
+      .get(id) as WriteWorktreeRow | undefined;
+    return row === undefined ? undefined : writeWorktreeFromRow(row);
   }
 
   private latestRevisionForBranch(branch: GhostBranch): GhostRevision {
@@ -1323,6 +1516,49 @@ export class GhostDatabase {
       CREATE INDEX IF NOT EXISTS agent_switches_branch_created
       ON agent_switches(branch_id, created_at);
 
+      CREATE TABLE IF NOT EXISTS write_worktrees (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL UNIQUE REFERENCES branches(id) ON DELETE RESTRICT,
+        repository_path TEXT NOT NULL,
+        worktree_path TEXT NOT NULL UNIQUE,
+        git_branch TEXT NOT NULL UNIQUE,
+        base_commit TEXT NOT NULL,
+        lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'closed')),
+        created_at TEXT NOT NULL,
+        closed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS write_worktrees_repository_lifecycle
+      ON write_worktrees(repository_path, lifecycle);
+
+      CREATE TABLE IF NOT EXISTS patch_provenance (
+        id TEXT PRIMARY KEY,
+        worktree_id TEXT NOT NULL REFERENCES write_worktrees(id) ON DELETE RESTRICT,
+        base_commit TEXT NOT NULL,
+        head_commit TEXT NOT NULL,
+        diff_sha256 TEXT NOT NULL,
+        changed_file_count INTEGER NOT NULL CHECK (changed_file_count > 0),
+        created_at TEXT NOT NULL,
+        UNIQUE(worktree_id, head_commit)
+      );
+
+      CREATE INDEX IF NOT EXISTS patch_provenance_worktree_created
+      ON patch_provenance(worktree_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS write_promotions (
+        id TEXT PRIMARY KEY,
+        worktree_id TEXT NOT NULL REFERENCES write_worktrees(id) ON DELETE RESTRICT,
+        patch_id TEXT NOT NULL REFERENCES patch_provenance(id) ON DELETE RESTRICT,
+        target_git_branch TEXT NOT NULL,
+        source_commit TEXT NOT NULL,
+        target_before_commit TEXT NOT NULL,
+        target_after_commit TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS write_promotions_worktree_created
+      ON write_promotions(worktree_id, created_at);
+
       CREATE TABLE IF NOT EXISTS materialization_runs (
         id TEXT PRIMARY KEY,
         branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
@@ -1435,6 +1671,47 @@ function branchRebaseFromRow(row: BranchRebaseRow): BranchRebase {
     toRevisionId: row.to_revision_id,
     addedEventCount: row.added_event_count,
     createdAt: row.created_at,
+  };
+}
+
+function writeWorktreeFromRow(row: WriteWorktreeRow): WriteWorktree {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    repositoryPath: row.repository_path,
+    worktreePath: row.worktree_path,
+    gitBranch: row.git_branch,
+    baseCommit: row.base_commit,
+    lifecycle: row.lifecycle,
+    createdAt: row.created_at,
+    ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
+  };
+}
+
+function patchProvenanceFromRow(row: PatchProvenanceRow): PatchProvenance {
+  return {
+    id: row.id,
+    worktreeId: row.worktree_id,
+    baseCommit: row.base_commit,
+    headCommit: row.head_commit,
+    diffSha256: row.diff_sha256,
+    changedFileCount: row.changed_file_count,
+    createdAt: row.created_at,
+  };
+}
+
+function writePromotionFromRow(row: WritePromotionRow): WritePromotion {
+  return {
+    id: row.id,
+    worktreeId: row.worktree_id,
+    patchId: row.patch_id,
+    targetGitBranch: row.target_git_branch,
+    sourceCommit: row.source_commit,
+    targetBeforeCommit: row.target_before_commit,
+    targetAfterCommit: row.target_after_commit,
+    status: 'succeeded',
+    createdAt: row.created_at,
+    completedAt: row.created_at,
   };
 }
 
