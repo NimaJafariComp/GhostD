@@ -23,7 +23,7 @@ jobs:
         name: Require tag and package version to match
         shell: bash
         run: |
-          version="$(node -p \"require('./package.json').version\")"
+          version="$(node -p 'require(\"./package.json\").version')"
           test "v${version}" = "${GITHUB_REF_NAME}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - run: npm run release:verify
