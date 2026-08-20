@@ -5,12 +5,14 @@ import { join } from 'node:path';
 
 import type { AgentCapabilities } from '../../core/materialization.js';
 import type { ContextTargetAdapter, TargetRequest, TargetResult } from '../targets.js';
+import type { AnswerThinkingLevel } from '../../question/options.js';
 
 const DEFAULT_CODEX_MODEL = 'codex-cli';
 
 export interface CodexSidecarRequest {
   prompt: string;
   model?: string;
+  thinking?: AnswerThinkingLevel;
 }
 
 export interface CodexSidecarRunner {
@@ -57,17 +59,23 @@ export class CodexTargetAdapter implements ContextTargetAdapter {
 
   public async ask(request: TargetRequest): Promise<TargetResult> {
     return {
-      model: this.model,
+      model: request.model ?? this.model,
       text: await this.runner.run({
         prompt: `${request.system}\n\n${request.prompt}`,
-        ...(this.model === DEFAULT_CODEX_MODEL ? {} : { model: this.model }),
+        ...((request.model ?? this.model) === DEFAULT_CODEX_MODEL ? {} : { model: request.model ?? this.model }),
+        ...(request.thinking === undefined ? {} : { thinking: request.thinking }),
       }),
     };
   }
 }
 
 /** The fixed invocation deliberately permits neither session resume nor workspace writes. */
-export function codexSidecarArguments(isolatedWorkspace: string, outputPath: string, model?: string): string[] {
+export function codexSidecarArguments(
+  isolatedWorkspace: string,
+  outputPath: string,
+  model?: string,
+  thinking?: AnswerThinkingLevel,
+): string[] {
   return [
     '--sandbox', 'read-only',
     '--ask-for-approval', 'never',
@@ -79,6 +87,7 @@ export function codexSidecarArguments(isolatedWorkspace: string, outputPath: str
     '--cd', isolatedWorkspace,
     '--output-last-message', outputPath,
     ...(model === undefined ? [] : ['--model', model]),
+    ...(thinking === undefined ? [] : ['--config', `model_reasoning_effort=${JSON.stringify(thinking)}`]),
     '-',
   ];
 }
@@ -88,7 +97,7 @@ class IsolatedCodexSidecarRunner implements CodexSidecarRunner {
     const isolatedWorkspace = await mkdtemp(join(tmpdir(), 'ghostd-codex-sidecar-'));
     const outputPath = join(isolatedWorkspace, 'answer.txt');
     try {
-      await runCodex(codexSidecarArguments(isolatedWorkspace, outputPath, request.model), request.prompt, isolatedWorkspace);
+      await runCodex(codexSidecarArguments(isolatedWorkspace, outputPath, request.model, request.thinking), request.prompt, isolatedWorkspace);
       const answer = (await readFile(outputPath, 'utf8')).trim();
       if (answer.length === 0) {
         throw new CodexSidecarError('empty_response');

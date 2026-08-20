@@ -63,4 +63,21 @@ describe('GeminiTargetAdapter', () => {
 
     await expect(target.ask({ system: 'Read only.', prompt: 'Hello.' })).rejects.toEqual(new GeminiApiError(500));
   });
+
+  it('accepts an explicit model and supported thinking level per request', async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    const target = new GeminiTargetAdapter({
+      apiKey: 'test-key',
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), body: String(init?.body) });
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Answer.' }] } }] }));
+      },
+    });
+
+    await target.ask({ system: 'Read only.', prompt: 'Explain.', model: 'gemini-3.6-flash', thinking: 'medium' });
+
+    expect(requests[0]?.url).toContain('/gemini-3.6-flash:generateContent');
+    expect(JSON.parse(requests[0]?.body ?? '')).toMatchObject({ generationConfig: { thinkingConfig: { thinkingLevel: 'medium' } } });
+    await expect(target.ask({ system: 'Read only.', prompt: 'Explain.', thinking: 'max' })).rejects.toThrow('Gemini supports --thinking');
+  });
 });

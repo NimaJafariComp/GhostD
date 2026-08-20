@@ -1,4 +1,5 @@
 import type { AgentCapabilities, MaterializationStrategy } from '../core/materialization.js';
+import type { AnswerThinkingLevel } from '../question/options.js';
 
 export interface TargetAdapter {
   readonly capabilities: AgentCapabilities;
@@ -8,6 +9,8 @@ export interface TargetRequest {
   system: string;
   prompt: string;
   responseFormat?: 'json';
+  model?: string;
+  thinking?: AnswerThinkingLevel;
 }
 
 export interface TargetResult {

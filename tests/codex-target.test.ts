@@ -40,4 +40,13 @@ describe('Codex sidecar target', () => {
     expect(arguments_).not.toContain('--add-dir');
     expect(arguments_).not.toContain('--dangerously-bypass-approvals-and-sandbox');
   });
+
+  it('passes explicit model and reasoning effort only to the isolated sidecar', async () => {
+    const runner = new FixtureRunner();
+    const target = new CodexTargetAdapter(runner);
+    await target.ask({ system: 'Read only.', prompt: 'What is true?', model: 'codex-mid', thinking: 'medium' });
+
+    expect(runner.requests).toEqual([{ prompt: 'Read only.\n\nWhat is true?', model: 'codex-mid', thinking: 'medium' }]);
+    expect(codexSidecarArguments('/tmp/ghost', '/tmp/ghost/answer.txt', 'codex-mid', 'medium')).toContain('model_reasoning_effort="medium"');
+  });
 });

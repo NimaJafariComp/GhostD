@@ -8,8 +8,9 @@ import type { GhostBranch, GhostRevision, WorkspaceSnapshot } from '../core/grap
 import type { MaterializationMode, MaterializationRun } from '../core/materialization.js';
 import { GhostDatabase } from '../db/database.js';
 import { redactText } from '../privacy/redaction.js';
+import type { AnswerSelection } from '../question/options.js';
 
-export interface AskClaudeInput {
+export interface AskClaudeInput extends AnswerSelection {
   branchName: string;
   prompt: string;
   mode: MaterializationMode;
@@ -66,7 +67,8 @@ export class MaterializationService {
     const run = this.database.startMaterializationRun({
       branchId: branch.id,
       provider: target.capabilities.provider,
-      model: target.model,
+      model: input.model ?? target.model,
+      ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
       sourceRevisionId: revision.id,
       mode: input.mode,
       strategy,
@@ -80,6 +82,8 @@ export class MaterializationService {
       const result = await target.ask({
         system: systemPrompt(target.capabilities.provider, revision, snapshot),
         prompt: `${remoteContext}\n\nUSER ASK\n${remotePrompt}`,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
       });
       const latencyMs = Math.max(0, this.clock() - startedAtMs);
       const materialization = this.database.recordMaterialization(
@@ -92,6 +96,7 @@ export class MaterializationService {
       const cost = estimatedCost(result.inputTokens, result.outputTokens);
       const completed = this.database.completeMaterializationRun(run.id, {
         materializationId: materialization.id,
+        model: result.model,
         ...(result.providerHandle === undefined ? {} : { providerHandle: result.providerHandle }),
         ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
         ...(result.outputTokens === undefined ? {} : { outputTokens: result.outputTokens }),

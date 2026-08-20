@@ -1,5 +1,6 @@
 import type { AgentCapabilities } from '../../core/materialization.js';
 import type { ContextTargetAdapter, TargetRequest, TargetResult } from '../targets.js';
+import type { AnswerThinkingLevel } from '../../question/options.js';
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 // Google keeps older models listable after they stop accepting new users.
@@ -57,7 +58,11 @@ export class GeminiTargetAdapter implements ContextTargetAdapter {
     if (this.apiKey === undefined || this.apiKey.trim().length === 0) {
       throw new Error('GEMINI_API_KEY or GOOGLE_API_KEY is required to ask Gemini.');
     }
-    const response = await this.fetchImpl(`${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`, {
+    const model = request.model ?? this.model;
+    const thinkingLevel = request.thinking === undefined
+      ? this.thinkingLevel
+      : geminiThinkingLevel(request.thinking);
+    const response = await this.fetchImpl(`${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -68,7 +73,7 @@ export class GeminiTargetAdapter implements ContextTargetAdapter {
         contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
         generationConfig: {
           maxOutputTokens: this.maxTokens,
-          thinkingConfig: { thinkingLevel: this.thinkingLevel },
+          thinkingConfig: { thinkingLevel },
           ...(request.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
         },
       }),
@@ -76,7 +81,7 @@ export class GeminiTargetAdapter implements ContextTargetAdapter {
     if (!response.ok) {
       throw new GeminiApiError(response.status);
     }
-    return parseGeminiResponse(await response.json(), this.model);
+    return parseGeminiResponse(await response.json(), model);
   }
 }
 
@@ -98,6 +103,13 @@ function configuredThinkingLevel(): GeminiThinkingLevel {
 
 function isGeminiThinkingLevel(value: string): value is GeminiThinkingLevel {
   return geminiThinkingLevels.some((level) => level === value);
+}
+
+function geminiThinkingLevel(value: AnswerThinkingLevel): GeminiThinkingLevel {
+  if (isGeminiThinkingLevel(value)) {
+    return value;
+  }
+  throw new Error(`Gemini supports --thinking minimal, low, medium, or high; received ${value}.`);
 }
 
 function parseGeminiResponse(value: unknown, fallbackModel: string): TargetResult {

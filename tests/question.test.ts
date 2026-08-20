@@ -8,7 +8,7 @@ import type { ContextTargetAdapter, TargetRequest, TargetResult } from '../src/a
 import type { GhostEvent } from '../src/core/events.js';
 import { GhostDatabase } from '../src/db/database.js';
 import { MaterializationFailureError, MaterializationService } from '../src/materialization/service.js';
-import { QuestionService, resolveQuestionProvider, resolveQuestionSession } from '../src/question/service.js';
+import { QuestionService, resolveQuestionProvider, resolveQuestionSelection, resolveQuestionSession } from '../src/question/service.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -86,6 +86,62 @@ describe('terminal-first sidecar questions', () => {
       unsupported.append({ ...event('three', 'antigravity-session', 'Current objective.'), source: 'antigravity' });
       expect(() => resolveQuestionProvider(unsupported, '/work/ghost')).toThrow('has no configured GhostD answer target');
       unsupported.close();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('uses a documented same-provider source model, while cross-provider sidecars default to medium thinking', async () => {
+    const database = await openDatabase();
+    try {
+      database.append({
+        ...event('start', 'claude-session', 'Session started.'),
+        source: 'claude',
+        type: 'session_start',
+        payload: { model: 'claude-sonnet-4-6' },
+      });
+      database.append({ ...event('prompt', 'claude-session', 'Current objective.'), source: 'claude' });
+      const session = database.sessions('/work/ghost')[0];
+      expect(session).toBeDefined();
+      const sessionId = session?.id ?? 'missing';
+
+      expect(resolveQuestionSelection(database, sessionId, 'claude')).toEqual({ model: 'claude-sonnet-4-6' });
+      expect(resolveQuestionSelection(database, sessionId, 'gemini')).toEqual({ thinking: 'medium' });
+
+      database.setSessionAnswerPreference(sessionId, 'gemini', { model: 'gemini-3.6-flash' }, '2026-08-20T12:01:00.000Z');
+      expect(resolveQuestionSelection(database, sessionId, 'gemini')).toEqual({ model: 'gemini-3.6-flash', thinking: 'medium' });
+      database.setSessionAnswerPreference(sessionId, 'gemini', { thinking: 'high' }, '2026-08-20T12:02:00.000Z');
+      expect(resolveQuestionSelection(database, sessionId, 'gemini')).toEqual({ model: 'gemini-3.6-flash', thinking: 'high' });
+      expect(database.sessionAnswerPreferences(sessionId)).toMatchObject([
+        { provider: 'gemini', model: 'gemini-3.6-flash', thinking: 'high' },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('forwards a selected model and thinking policy and records both with the sidecar run', async () => {
+    const database = await openDatabase();
+    try {
+      database.append(event('one', 'session-one', 'Current objective.'));
+      const requests: TargetRequest[] = [];
+      const claude = target('claude', async (request) => {
+        requests.push(request);
+        return { model: request.model ?? 'claude-test', text: 'Read-only answer.' };
+      });
+      const gemini = target('gemini', async () => ({ model: 'gemini-test', text: 'unused' }));
+      const materialization = new MaterializationService(database, claude, () => '2026-08-20T12:01:00.000Z', () => 10, gemini);
+
+      const result = await new QuestionService(database, materialization, () => 'model-choice').ask({
+        sessionId: 'session-one',
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        thinking: 'medium',
+        prompt: 'What is true now?',
+      });
+
+      expect(requests[0]).toMatchObject({ model: 'claude-sonnet-4-6', thinking: 'medium' });
+      expect(result.run).toMatchObject({ model: 'claude-sonnet-4-6', thinking: 'medium' });
     } finally {
       database.close();
     }

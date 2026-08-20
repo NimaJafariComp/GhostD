@@ -48,6 +48,19 @@ describe('ClaudeSourceAdapter', () => {
     ]);
   });
 
+  it('retains the documented SessionStart model signal without reading a transcript', () => {
+    const adapter = new ClaudeSourceAdapter(() => workspace, () => '2026-08-20T12:00:00.000Z', () => 'event-model');
+
+    expect(adapter.normalize({
+      hook_event_name: 'SessionStart',
+      session_id: 'claude-session',
+      model: 'claude-sonnet-4-6',
+      transcript_path: '/private/provider/transcript.jsonl',
+    })).toEqual([
+      expect.objectContaining({ type: 'session_start', payload: { claudeEvent: 'session_start', model: 'claude-sonnet-4-6' } }),
+    ]);
+  });
+
   it('uses documented provider error fields for failed tools and failed turns', () => {
     const adapter = new ClaudeSourceAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'event-3');
 

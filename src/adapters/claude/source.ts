@@ -64,6 +64,11 @@ function payload(input: ClaudeHookInput, type: GhostEventType): Record<string, u
           : { output: input['tool_response'] ?? input['error'] }),
         ...(isRecord(temporal) ? { temporal } : {}),
       };
+    case 'session_start':
+      return {
+        claudeEvent: type,
+        ...(stringValue(input, 'model') === undefined ? {} : { model: stringValue(input, 'model') }),
+      };
     default:
       return {
         claudeEvent: type,

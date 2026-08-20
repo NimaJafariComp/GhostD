@@ -1,5 +1,6 @@
 import type { AgentCapabilities } from '../../core/materialization.js';
 import type { ContextTargetAdapter } from '../targets.js';
+import type { AnswerThinkingLevel } from '../../question/options.js';
 
 const CLAUDE_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_API_VERSION = '2023-06-01';
@@ -9,6 +10,8 @@ const DEFAULT_MAX_TOKENS = 1024;
 export interface ClaudeRequest {
   system: string;
   prompt: string;
+  model?: string;
+  thinking?: AnswerThinkingLevel;
 }
 
 export interface ClaudeResult {
@@ -70,17 +73,28 @@ export class ClaudeTargetAdapter implements ContextTargetAdapter {
         'x-api-key': this.apiKey,
       },
       body: JSON.stringify({
-        model: this.model,
+        model: request.model ?? this.model,
         max_tokens: this.maxTokens,
         system: request.system,
         messages: [{ role: 'user', content: request.prompt }],
+        ...(request.thinking === undefined ? {} : {
+          thinking: { type: 'adaptive', display: 'omitted' },
+          output_config: { effort: claudeEffort(request.thinking) },
+        }),
       }),
     });
     if (!response.ok) {
       throw new ClaudeApiError(response.status);
     }
-    return parseClaudeResponse(await response.json(), this.model);
+    return parseClaudeResponse(await response.json(), request.model ?? this.model);
   }
+}
+
+function claudeEffort(thinking: AnswerThinkingLevel): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
+  if (thinking === 'minimal') {
+    return 'low';
+  }
+  return thinking;
 }
 
 function configuredMaxTokens(): number {

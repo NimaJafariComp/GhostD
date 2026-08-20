@@ -23,6 +23,7 @@ export interface MaterializationRun {
   branchId: string;
   provider: string;
   model: string;
+  thinking?: string;
   sourceRevisionId: string;
   mode: MaterializationMode;
   strategy: MaterializationStrategy;
@@ -44,6 +45,7 @@ export interface StartMaterializationRun {
   branchId: string;
   provider: string;
   model: string;
+  thinking?: string;
   sourceRevisionId: string;
   mode: MaterializationMode;
   strategy: MaterializationStrategy;
@@ -52,6 +54,7 @@ export interface StartMaterializationRun {
 
 export interface CompleteMaterializationRun {
   materializationId: string;
+  model: string;
   providerHandle?: string;
   inputTokens?: number;
   outputTokens?: number;

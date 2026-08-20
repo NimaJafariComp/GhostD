@@ -27,7 +27,9 @@ import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeSe
 import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
-import { QuestionService, resolveQuestionProvider, resolveQuestionSession } from '../question/service.js';
+import { QuestionService, resolveQuestionProvider, resolveQuestionSelection, resolveQuestionSession } from '../question/service.js';
+import { isAnswerThinkingLevel, validateModelName } from '../question/options.js';
+import type { AnswerSelection } from '../question/options.js';
 import { ComparisonService } from '../reasoning/service.js';
 import { WriteBranchService } from '../write/service.js';
 import { serveMcp } from '../mcp/server.js';
@@ -59,15 +61,18 @@ function usage(): string {
   ghost branch status <name>
                             Show pending synchronization and stale materializations.
   ghost rebase <branch>     Explicitly advance a branch to its latest captured revision.
-  ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
-  ghost ask gemini <prompt> Ask Gemini ephemerally from the latest session checkpoint.
-  ghost ask codex <prompt> Ask Codex ephemerally from the latest session checkpoint.
-  ghost ask <branch> <prompt>
+  ghost ask <codex|claude|gemini> [--model <id>] [--thinking <level>] <prompt>
+                            Ask a provider ephemerally from the latest session checkpoint.
+  ghost ask <branch> [--model <id>] [--thinking <level>] <prompt>
                             Ask Claude from a persistent Ghost branch.
-  ghost question <prompt>   Ask the configured default provider from the selected captured session.
-  ghost <codex|claude|gemini> <prompt>
+  ghost question [--model <id>] [--thinking <level>] <prompt>
+                            Ask the configured default provider from the selected captured session.
+  ghost <codex|claude|gemini> [--model <id>] [--thinking <level>] <prompt>
                             Ask that provider ephemerally from the selected captured session.
-  ghost <prompt>            Ask the provider of the selected captured session ephemerally.
+  ghost [--model <id>] [--thinking <level>] <prompt>
+                            Ask the provider of the selected captured session ephemerally.
+                            An explicit model or thinking level becomes the selected session's
+                            default for that provider after a successful sidecar answer.
   ghost compare <branch> <prompt>
                             Run Claude and Gemini against one frozen branch revision.
   ghost copy <source> <new-branch>
@@ -410,12 +415,12 @@ async function rebase(arguments_: string[]): Promise<void> {
 
 async function ask(arguments_: string[]): Promise<void> {
   const target = arguments_.at(0);
-  const prompt = arguments_.slice(1).join(' ').trim();
-  if (target === undefined || prompt.length === 0) {
-    throw new Error('Usage: ghost ask <codex|claude|gemini|branch> <prompt>.');
+  if (target === undefined) {
+    throw new Error('Usage: ghost ask <codex|claude|gemini|branch> [--model <id>] [--thinking <level>] <prompt>.');
   }
+  const input = parseQuestionArguments(arguments_.slice(1), 'ghost ask <codex|claude|gemini|branch> [--model <id>] [--thinking <level>] <prompt>');
   if (isAnswerProvider(target)) {
-    await providerQuestion(target, prompt);
+    await providerQuestion(target, input);
     return;
   }
 
@@ -426,54 +431,116 @@ async function ask(arguments_: string[]): Promise<void> {
     }
 
     const service = new MaterializationService(database);
-    const result = await service.askClaude({ branchName: target, prompt, mode: 'persistent' });
+    const result = await service.askClaude({ branchName: target, prompt: input.prompt, mode: 'persistent', ...input.selection });
     output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
   } finally {
     database.close();
   }
 }
 
-async function providerQuestion(provider: AnswerProvider, prompt: string): Promise<void> {
-  if (prompt.length === 0) {
-    throw new Error(`Usage: ghost ${provider} <prompt>.`);
+interface ParsedQuestionArguments {
+  prompt: string;
+  selection: AnswerSelection;
+  hasExplicitSelection: boolean;
+}
+
+function parseQuestionArguments(arguments_: string[], usageText: string): ParsedQuestionArguments {
+  let model: string | undefined;
+  let thinking: AnswerSelection['thinking'];
+  const promptParts: string[] = [];
+  let promptOnly = false;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === undefined) continue;
+    if (promptOnly) {
+      promptParts.push(argument);
+      continue;
+    }
+    if (argument === '--') {
+      promptOnly = true;
+      continue;
+    }
+    if (argument === '--model') {
+      const value = arguments_[index + 1];
+      if (value === undefined) throw new Error(`Usage: ${usageText}.`);
+      if (model !== undefined) throw new Error('Specify --model at most once.');
+      model = validateModelName(value);
+      index += 1;
+      continue;
+    }
+    if (argument === '--thinking') {
+      const value = arguments_[index + 1];
+      if (value === undefined || !isAnswerThinkingLevel(value)) {
+        throw new Error('Choose --thinking minimal, low, medium, high, xhigh, or max.');
+      }
+      if (thinking !== undefined) throw new Error('Specify --thinking at most once.');
+      thinking = value;
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith('--')) {
+      throw new Error(`Unknown question option ${argument}. ${usageText}.`);
+    }
+    promptParts.push(argument);
   }
+  const prompt = promptParts.join(' ').trim();
+  if (prompt.length === 0) throw new Error(`Usage: ${usageText}.`);
+  return {
+    prompt,
+    selection: {
+      ...(model === undefined ? {} : { model }),
+      ...(thinking === undefined ? {} : { thinking }),
+    },
+    hasExplicitSelection: model !== undefined || thinking !== undefined,
+  };
+}
+
+async function providerQuestion(provider: AnswerProvider, input: ParsedQuestionArguments): Promise<void> {
   const database = await GhostDatabase.open(databasePath());
   try {
     const sessionId = resolveQuestionSession(database, process.cwd());
-    await materializeQuestion(database, sessionId, provider, prompt);
+    await materializeQuestion(database, sessionId, provider, input);
   } finally {
     database.close();
   }
 }
 
-async function selectedProviderQuestion(prompt: string): Promise<void> {
-  if (prompt.length === 0) {
-    throw new Error('Usage: ghost <prompt>.');
-  }
+async function selectedProviderQuestion(input: ParsedQuestionArguments): Promise<void> {
   const database = await GhostDatabase.open(databasePath());
   try {
     const { sessionId, provider } = resolveQuestionProvider(database, process.cwd());
-    await materializeQuestion(database, sessionId, provider, prompt);
+    await materializeQuestion(database, sessionId, provider, input);
   } finally {
     database.close();
   }
 }
 
-async function materializeQuestion(database: GhostDatabase, sessionId: string, provider: AnswerProvider, prompt: string): Promise<void> {
-  const result = await new QuestionService(database).ask({ sessionId, provider, prompt });
-  output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
+async function materializeQuestion(
+  database: GhostDatabase,
+  sessionId: string,
+  provider: AnswerProvider,
+  input: ParsedQuestionArguments,
+): Promise<void> {
+  const selection: AnswerSelection = {
+    ...resolveQuestionSelection(database, sessionId, provider),
+    ...input.selection,
+  };
+  const result = await new QuestionService(database).ask({ sessionId, provider, prompt: input.prompt, ...selection });
+  if (input.hasExplicitSelection) {
+    database.setSessionAnswerPreference(sessionId, provider, input.selection);
+  }
+  const thinking = selection.thinking === undefined ? 'provider default' : selection.thinking;
+  const saved = input.hasExplicitSelection ? ' Saved as this Ghost session’s provider preference.' : '';
+  output.write(`${result.text}\n\nGhost target: ${provider} / ${result.run.model} / thinking ${thinking}.${saved}\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
 }
 
 async function question(arguments_: string[]): Promise<void> {
-  const prompt = arguments_.join(' ').trim();
-  if (prompt.length === 0) {
-    throw new Error('Usage: ghost question <prompt>.');
-  }
+  const input = parseQuestionArguments(arguments_, 'ghost question [--model <id>] [--thinking <level>] <prompt>');
   const provider = (await new IntegrationConfigStore().load()).defaultAnswerProvider;
   if (provider === undefined) {
     throw new Error('No default answer provider is configured. Run ghost configure default <codex|claude|gemini>.');
   }
-  await providerQuestion(provider, prompt);
+  await providerQuestion(provider, input);
 }
 
 async function compare(arguments_: string[]): Promise<void> {
@@ -781,6 +848,12 @@ async function session(arguments_: string[]): Promise<void> {
         output.write(`Selected: ${description(selected)}\n`);
         output.write(`Resolved: ${resolved === undefined ? 'none; select a session explicitly' : description(resolved)}\n`);
         output.write(`Open captured sessions: ${candidates.length}\n`);
+        if (selected !== undefined) {
+          const preferences = database.sessionAnswerPreferences(selected.id);
+          output.write(preferences.length === 0
+            ? 'Saved answer preferences: none\n'
+            : `Saved answer preferences: ${preferences.map((preference) => `${preference.provider} (${preference.model ?? 'provider default'}, ${preference.thinking ?? 'provider thinking default'})`).join('; ')}\n`);
+        }
         return;
       }
       case 'use': {
@@ -874,7 +947,7 @@ async function main(): Promise<void> {
     case 'codex':
     case 'claude':
     case 'gemini':
-      await providerQuestion(command, arguments_.join(' ').trim());
+      await providerQuestion(command, parseQuestionArguments(arguments_, `ghost ${command} [--model <id>] [--thinking <level>] <prompt>`));
       return;
     case 'compare':
       await compare(arguments_);
@@ -940,10 +1013,10 @@ async function main(): Promise<void> {
       output.write(`${usage()}\n`);
       return;
     default:
-      if (command.startsWith('-')) {
+      if (command.startsWith('-') && command !== '--model' && command !== '--thinking') {
         throw new Error(`Unknown command: ${command}.\n\n${usage()}`);
       }
-      await selectedProviderQuestion([command, ...arguments_].join(' ').trim());
+      await selectedProviderQuestion(parseQuestionArguments([command, ...arguments_], 'ghost [--model <id>] [--thinking <level>] <prompt>'));
       return;
   }
 }

@@ -71,6 +71,14 @@ interface SessionRow extends SessionIdRow {
   ended_at: string | null;
 }
 
+interface SessionAnswerPreferenceRow {
+  session_id: string;
+  provider: string;
+  model: string | null;
+  thinking: string | null;
+  updated_at: string;
+}
+
 export interface CapturedSession {
   id: string;
   source: string;
@@ -79,6 +87,15 @@ export interface CapturedSession {
   createdAt: string;
   lastSeenAt: string;
   endedAt?: string;
+}
+
+/** User-controlled sidecar target preference, scoped to one canonical Ghost session and provider. */
+export interface SessionAnswerPreference {
+  sessionId: string;
+  provider: string;
+  model?: string;
+  thinking?: string;
+  updatedAt: string;
 }
 
 interface ColumnRow {
@@ -129,6 +146,7 @@ interface MaterializationRunRow {
   branch_id: string;
   provider: string;
   model: string;
+  thinking: string | null;
   source_revision_id: string;
   mode: MaterializationRun['mode'];
   strategy: MaterializationRun['strategy'];
@@ -362,6 +380,89 @@ export class GhostDatabase {
       )
       .all(...(workspaceCwd === undefined ? [] : [workspaceCwd])) as unknown as SessionRow[];
     return rows.map(capturedSessionFromRow);
+  }
+
+  public sessionAnswerPreference(sessionId: string, provider: string): SessionAnswerPreference | undefined {
+    const storedSessionId = this.resolveStoredSessionId(sessionId);
+    const row = this.database
+      .prepare(
+        `SELECT session_id, provider, model, thinking, updated_at
+         FROM session_answer_preferences WHERE session_id = ? AND provider = ?`,
+      )
+      .get(storedSessionId, provider) as SessionAnswerPreferenceRow | undefined;
+    return row === undefined ? undefined : sessionAnswerPreferenceFromRow(row);
+  }
+
+  public sessionAnswerPreferences(sessionId: string): SessionAnswerPreference[] {
+    const storedSessionId = this.resolveStoredSessionId(sessionId);
+    const rows = this.database
+      .prepare(
+        `SELECT session_id, provider, model, thinking, updated_at
+         FROM session_answer_preferences WHERE session_id = ? ORDER BY provider ASC`,
+      )
+      .all(storedSessionId) as unknown as SessionAnswerPreferenceRow[];
+    return rows.map(sessionAnswerPreferenceFromRow);
+  }
+
+  /** Reads only a model identifier carried by a documented source event; it never inspects a host transcript or UI. */
+  public capturedSourceModel(sessionId: string): string | undefined {
+    const storedSessionId = this.resolveStoredSessionId(sessionId);
+    const rows = this.database
+      .prepare(
+        `SELECT payload_json FROM events WHERE session_id = ? AND type = 'session_start'
+         ORDER BY sequence DESC`,
+      )
+      .all(storedSessionId) as unknown as Array<{ payload_json: string }>;
+    for (const row of rows) {
+      const payload = JSON.parse(row.payload_json) as unknown;
+      if (typeof payload === 'object' && payload !== null && !Array.isArray(payload)) {
+        const model = (payload as Record<string, unknown>)['model'];
+        if (typeof model === 'string' && model.trim().length > 0) {
+          return model.trim();
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** Persists only explicit target choices; omitted fields retain the prior choice for this session/provider. */
+  public setSessionAnswerPreference(
+    sessionId: string,
+    provider: string,
+    update: { model?: string; thinking?: string },
+    updatedAt = new Date().toISOString(),
+  ): SessionAnswerPreference {
+    if (update.model === undefined && update.thinking === undefined) {
+      throw new Error('A model or thinking preference is required.');
+    }
+    const storedSessionId = this.resolveStoredSessionId(sessionId);
+    const session = this.session(storedSessionId);
+    if (session === undefined) {
+      throw new Error(`Session ${sessionId} does not exist.`);
+    }
+    const current = this.sessionAnswerPreference(storedSessionId, provider);
+    const preference: SessionAnswerPreference = {
+      sessionId: storedSessionId,
+      provider,
+      ...(update.model === undefined ? (current?.model === undefined ? {} : { model: current.model }) : { model: update.model }),
+      ...(update.thinking === undefined ? (current?.thinking === undefined ? {} : { thinking: current.thinking }) : { thinking: update.thinking }),
+      updatedAt,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO session_answer_preferences (session_id, provider, model, thinking, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, provider) DO UPDATE SET
+           model = excluded.model, thinking = excluded.thinking, updated_at = excluded.updated_at`,
+      )
+      .run(
+        preference.sessionId,
+        preference.provider,
+        preference.model ?? null,
+        preference.thinking ?? null,
+        preference.updatedAt,
+      );
+    return preference;
   }
 
   /** A user selection is the only durable active-session signal GhostD creates itself. */
@@ -1292,16 +1393,17 @@ export class GhostDatabase {
     this.database
       .prepare(
         `INSERT INTO materialization_runs (
-           id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+           id, branch_id, provider, model, thinking, source_revision_id, mode, strategy, status, materialization_id,
            provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
            completed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL)`,
       )
       .run(
         run.id,
         run.branchId,
         run.provider,
         run.model,
+        run.thinking ?? null,
         run.sourceRevisionId,
         run.mode,
         run.strategy,
@@ -1323,12 +1425,13 @@ export class GhostDatabase {
     this.database
       .prepare(
         `UPDATE materialization_runs
-         SET status = ?, materialization_id = ?, provider_handle = ?, input_tokens = ?, output_tokens = ?,
+         SET status = ?, model = ?, materialization_id = ?, provider_handle = ?, input_tokens = ?, output_tokens = ?,
              estimated_cost_usd = ?, latency_ms = ?, response_text = ?, completed_at = ?
          WHERE id = ?`,
       )
       .run(
         'succeeded',
+        outcome.model,
         outcome.materializationId,
         outcome.providerHandle ?? null,
         outcome.inputTokens ?? null,
@@ -1342,6 +1445,7 @@ export class GhostDatabase {
     return {
       ...run,
       status: 'succeeded',
+      model: outcome.model,
       materializationId: outcome.materializationId,
       ...(outcome.providerHandle === undefined ? {} : { providerHandle: outcome.providerHandle }),
       ...(outcome.inputTokens === undefined ? {} : { inputTokens: outcome.inputTokens }),
@@ -1371,7 +1475,7 @@ export class GhostDatabase {
   public materializationRun(id: string): MaterializationRun | undefined {
     const row = this.database
       .prepare(
-        `SELECT id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+        `SELECT id, branch_id, provider, model, thinking, source_revision_id, mode, strategy, status, materialization_id,
                 provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
                 completed_at
          FROM materialization_runs WHERE id = ?`,
@@ -1387,7 +1491,7 @@ export class GhostDatabase {
     }
     const row = this.database
       .prepare(
-        `SELECT id, branch_id, provider, model, source_revision_id, mode, strategy, status, materialization_id,
+        `SELECT id, branch_id, provider, model, thinking, source_revision_id, mode, strategy, status, materialization_id,
                 provider_handle, input_tokens, output_tokens, estimated_cost_usd, latency_ms, response_text, recovery, failure_code, created_at,
                 completed_at
          FROM materialization_runs WHERE branch_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
@@ -1503,6 +1607,15 @@ export class GhostDatabase {
         workspace_cwd TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
         selected_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS session_answer_preferences (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL,
+        model TEXT,
+        thinking TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, provider)
       );
 
       CREATE TABLE IF NOT EXISTS events (
@@ -1710,6 +1823,7 @@ export class GhostDatabase {
         branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
+        thinking TEXT,
         source_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
         mode TEXT NOT NULL CHECK (mode IN ('ephemeral', 'persistent')),
         strategy TEXT NOT NULL CHECK (strategy IN ('native_fork', 'session_resume', 'context_replay')),
@@ -1748,6 +1862,9 @@ export class GhostDatabase {
     }
     if (!materializationRunColumns.some(({ name }) => name === 'latency_ms')) {
       this.database.exec('ALTER TABLE materialization_runs ADD COLUMN latency_ms INTEGER');
+    }
+    if (!materializationRunColumns.some(({ name }) => name === 'thinking')) {
+      this.database.exec('ALTER TABLE materialization_runs ADD COLUMN thinking TEXT');
     }
   }
 }
@@ -1958,6 +2075,7 @@ function materializationRunFromRow(row: MaterializationRunRow): MaterializationR
     branchId: row.branch_id,
     provider: row.provider,
     model: row.model,
+    ...(row.thinking === null ? {} : { thinking: row.thinking }),
     sourceRevisionId: row.source_revision_id,
     mode: row.mode,
     strategy: row.strategy,
@@ -1973,5 +2091,15 @@ function materializationRunFromRow(row: MaterializationRunRow): MaterializationR
     ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
     createdAt: row.created_at,
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
+}
+
+function sessionAnswerPreferenceFromRow(row: SessionAnswerPreferenceRow): SessionAnswerPreference {
+  return {
+    sessionId: row.session_id,
+    provider: row.provider,
+    ...(row.model === null ? {} : { model: row.model }),
+    ...(row.thinking === null ? {} : { thinking: row.thinking }),
+    updatedAt: row.updated_at,
   };
 }
