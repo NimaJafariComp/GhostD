@@ -93,7 +93,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Track patch provenance, branch cleanup, and concurrent-agent safety. GhostD persists only commit ranges, changed-file counts, and SHA-256 patch identities—never patch contents—and retains the Git branch and audit history when a clean worktree is closed. Database uniqueness plus Git’s branch/worktree locking permits only one active replica per Ghost branch.
 - [x] Compare implementations and selectively promote user-approved code changes. `ghost worktree diff <branch>` renders an unpersisted review diff; `ghost worktree promote <branch> <target-git-branch> --approve` requires a clean source and target, the named target checked out, and a fast-forward-only merge. It never resolves conflicts or promotes automatically.
 
-## Phase 6 — Ecosystem integrations
+## Phase 6 — Ecosystem integration foundations
 
 **Status:** Complete
 
@@ -103,7 +103,24 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Add IDE/editor integrations only after CLI fidelity is proven. `ghost vscode setup` merges GhostD Context and MCP tasks into the current workspace’s `.vscode/tasks.json` without replacing existing tasks or extensions.
 - [x] Add Antigravity integration discovery. `ghost providers` detects the official `antigravity` executable and lets users record explicit `subscription` or `api` provider mode via `ghost configure`; credentials are never persisted by GhostD, and no unverified installer command is run.
 
-## Phase 7 — Distribution and universal installation
+**Limitation:** This phase provides provider-neutral interfaces and a Codex project-hook installer, but it does not provide universal source capture or active-session detection. That capability is a blocking requirement of Phase 7.
+
+## Phase 7 — Universal host integration and session coordination
+
+**Status:** Planned — blocks Phase 8 release distribution
+
+- [ ] Replace the Codex-only meaning of `ghost setup` with an explicit, provider-neutral setup flow. It must discover only supported locally available hosts, explain their capture capability and configuration scope, and require confirmation before changing each host's project or user configuration.
+- [ ] Implement and validate source-capture installers for supported host contracts: Codex, Claude Code, and Gemini CLI. Treat editor extensions, desktop applications, Antigravity, and any provider without a documented capture contract as unavailable until a supported integration has been built and verified.
+- [ ] Normalize every received lifecycle event into a stable host-session identity containing provider, provider-supplied session ID, and workspace identity. Do not infer identity from process names, window titles, transcript files, or undocumented private state.
+- [ ] Add explicit session coordination: `ghost session list`, `ghost session status`, and user-controlled session selection. An integration may report an activation/focus event, but GhostD must never select a session merely because it is the most recently seen session from another workspace or provider.
+- [ ] Support concurrent sessions in the same workspace and concurrent providers without merging them implicitly. Cross-provider continuation must remain an intentional Ghost handoff or branch action.
+- [ ] Record capture availability separately from provider availability: a discovered CLI or logged-in desktop app is not evidence that GhostD can observe its active session.
+- [ ] Keep host boundaries safe: provider hooks may send only their documented event payloads; GhostD must not read hidden transcripts, collect credentials, grant trust, or add a hook to an untrusted project without explicit user confirmation.
+- [ ] Test setup, idempotent configuration merging, activation/session routing, simultaneous-session ambiguity, project trust, uninstall, and degraded behavior for each supported host and operating system.
+
+**Exit criterion:** In a supported host, a user can explicitly enable GhostD capture, see the exact host session and workspace GhostD is receiving, choose among simultaneous sessions when necessary, and remove the integration cleanly. GhostD never claims to capture an app, plugin, or session for which no verified integration is active.
+
+## Phase 8 — Distribution and universal installation
 
 **Status:** Planned
 
@@ -118,7 +135,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 **Exit criterion:** A new user can install a verified, released GhostD build through npm or the supported Homebrew tap, run `ghost doctor`, and complete explicit setup without manually cloning the repository or exposing credentials to GhostD.
 
-## Phase 8 — Human-centered interaction and product surfaces
+## Phase 9 — Human-centered interaction and product surfaces
 
 **Status:** Planned
 
