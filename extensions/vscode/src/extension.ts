@@ -104,13 +104,14 @@ class GhostSessionsProvider implements vscode.TreeDataProvider<GhostSessionItem>
   }
 }
 
-class GhostdController implements vscode.Disposable {
+class GhostdController implements vscode.Disposable, vscode.WebviewViewProvider {
   private readonly statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private readonly output = vscode.window.createOutputChannel('GhostD');
   private readonly sessions = new GhostSessionsProvider();
   private readonly bridgeProcesses = new Map<string, ReturnType<typeof spawn>>();
   private sessionView: vscode.TreeView<GhostSessionItem> | undefined;
   private dashboard: vscode.WebviewPanel | undefined;
+  private sidebarDashboard: vscode.WebviewView | undefined;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusBar.command = 'ghostd.connect';
@@ -126,6 +127,17 @@ class GhostdController implements vscode.Disposable {
   public setSessionView(sessionView: vscode.TreeView<GhostSessionItem>): void {
     this.sessionView = sessionView;
     this.sessionView.message = this.sessions.messageText;
+  }
+
+  public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.sidebarDashboard = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'resources')],
+    };
+    webviewView.webview.onDidReceiveMessage((message: unknown) => { void this.handleDashboardMessage(message); }, undefined, this.context.subscriptions);
+    webviewView.onDidDispose(() => { this.sidebarDashboard = undefined; }, undefined, this.context.subscriptions);
+    void this.updateDashboard();
   }
 
   public async connect(): Promise<void> {
@@ -443,11 +455,16 @@ class GhostdController implements vscode.Disposable {
   }
 
   private async updateDashboard(): Promise<void> {
-    const dashboard = this.dashboard;
-    if (dashboard === undefined) return;
     const snapshot = await this.dashboardSnapshot();
-    const logo = dashboard.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'ghostd-icon.png'));
-    dashboard.webview.html = dashboardHtml(snapshot, logo.toString(), nonce());
+    const icon = vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'ghostd-icon.png');
+    if (this.dashboard !== undefined) {
+      const logo = this.dashboard.webview.asWebviewUri(icon);
+      this.dashboard.webview.html = dashboardHtml(snapshot, logo.toString(), nonce(), false);
+    }
+    if (this.sidebarDashboard !== undefined) {
+      const logo = this.sidebarDashboard.webview.asWebviewUri(icon);
+      this.sidebarDashboard.webview.html = dashboardHtml(snapshot, logo.toString(), nonce(), true);
+    }
   }
 
   private async dashboardSnapshot(): Promise<DashboardSnapshot> {
@@ -523,6 +540,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     controller,
     sessionView,
+    vscode.window.registerWebviewViewProvider('ghostd.dashboardSidebar', controller),
     vscode.commands.registerCommand('ghostd.connect', () => controller.connect().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.configureCodex', () => controller.configureCodex().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.configureClaude', () => controller.configureClaude().catch((error: unknown) => showCommandError(error))),
@@ -579,7 +597,7 @@ function nonce(): string {
   return randomUUID().replaceAll('-', '');
 }
 
-function dashboardHtml(snapshot: DashboardSnapshot, logo: string, scriptNonce: string): string {
+function dashboardHtml(snapshot: DashboardSnapshot, logo: string, scriptNonce: string, compact: boolean): string {
   const sessions = snapshot.sessions.length === 0
     ? '<p class="empty">No captured sessions yet. Configure a supported host, then start or resume its agent session.</p>'
     : `<ul>${snapshot.sessions.slice(0, 5).map((session) => `<li><strong>${escapeHtml(session.source)}</strong><span>${session.endedAt === undefined ? 'open' : 'ended'} · ${escapeHtml(session.sourceSessionId)}</span></li>`).join('')}</ul>`;
@@ -592,8 +610,9 @@ function dashboardHtml(snapshot: DashboardSnapshot, logo: string, scriptNonce: s
     }).join('')}</ul>`;
   const connection = snapshot.connected ? 'Connected locally' : 'Not connected';
   const workspace = snapshot.workspace ?? 'Open a folder to begin';
+  const layoutClass = compact ? 'compact' : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${logo}; style-src 'unsafe-inline'; script-src 'nonce-${scriptNonce}';"><title>GhostD</title><style>
-:root{color-scheme:dark light;font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background)}*{box-sizing:border-box}body{margin:0;padding:28px;max-width:980px}.hero{display:flex;gap:20px;align-items:center;padding:24px;background:linear-gradient(130deg,color-mix(in srgb,var(--vscode-editor-background) 82%,#165db4),var(--vscode-editor-background));border:1px solid var(--vscode-panel-border);border-radius:16px}.hero img{width:70px;height:70px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font:600 11px var(--vscode-editor-font-family);color:#4ed7ff;margin:0 0 5px}.hero h1{font-size:28px;margin:0}.hero p{margin:5px 0 0;line-height:1.45;color:var(--vscode-descriptionForeground)}.status{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0;padding:14px 16px;border-left:3px solid #46d6ff;background:var(--vscode-sideBar-background)}.status strong{display:block}.status span{font-size:12px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:620px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:16px}.card{border:1px solid var(--vscode-panel-border);border-radius:12px;padding:18px;background:var(--vscode-editorWidget-background)}h2{font-size:14px;margin:0 0 12px}p,li{font-size:13px;line-height:1.5}.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.actions button:first-child{grid-column:span 2}button{border:1px solid var(--vscode-button-border,transparent);border-radius:7px;padding:9px 10px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);font:600 12px var(--vscode-font-family);cursor:pointer}button.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button:hover{background:var(--vscode-button-hoverBackground)}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--vscode-panel-border)}li:first-child{border-top:0;padding-top:0}small,li span{display:block;font-size:11px;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family)}em{font-style:normal;font:600 11px var(--vscode-editor-font-family);white-space:nowrap}.ready{color:#48d597}.blocked{color:#e5ad55}.empty{color:var(--vscode-descriptionForeground);margin:0}.safety{margin-top:16px;padding:12px 14px;border-radius:8px;background:color-mix(in srgb,#7a45ff 13%,var(--vscode-editorWidget-background));color:var(--vscode-descriptionForeground)}.safety strong{color:var(--vscode-foreground)}code{font-family:var(--vscode-editor-font-family)}@media(max-width:500px){body{padding:16px}.hero{padding:18px}.actions{grid-template-columns:1fr}.actions button:first-child{grid-column:auto}.status{align-items:flex-start;flex-direction:column}}</style></head><body>
+:root{color-scheme:dark light;font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background)}*{box-sizing:border-box}body{margin:0;padding:28px;max-width:980px}.hero{display:flex;gap:20px;align-items:center;padding:24px;background:linear-gradient(130deg,color-mix(in srgb,var(--vscode-editor-background) 82%,#165db4),var(--vscode-editor-background));border:1px solid var(--vscode-panel-border);border-radius:16px}.hero img{width:70px;height:70px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font:600 11px var(--vscode-editor-font-family);color:#4ed7ff;margin:0 0 5px}.hero h1{font-size:28px;margin:0}.hero p{margin:5px 0 0;line-height:1.45;color:var(--vscode-descriptionForeground)}.status{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0;padding:14px 16px;border-left:3px solid #46d6ff;background:var(--vscode-sideBar-background)}.status strong{display:block}.status span{font-size:12px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:620px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:16px}.card{border:1px solid var(--vscode-panel-border);border-radius:12px;padding:18px;background:var(--vscode-editorWidget-background)}h2{font-size:14px;margin:0 0 12px}p,li{font-size:13px;line-height:1.5}.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.actions button:first-child{grid-column:span 2}button{border:1px solid var(--vscode-button-border,transparent);border-radius:7px;padding:9px 10px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);font:600 12px var(--vscode-font-family);cursor:pointer}button.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button:hover{background:var(--vscode-button-hoverBackground)}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--vscode-panel-border)}li:first-child{border-top:0;padding-top:0}small,li span{display:block;font-size:11px;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family)}em{font-style:normal;font:600 11px var(--vscode-editor-font-family);white-space:nowrap}.ready{color:#48d597}.blocked{color:#e5ad55}.empty{color:var(--vscode-descriptionForeground);margin:0}.safety{margin-top:16px;padding:12px 14px;border-radius:8px;background:color-mix(in srgb,#7a45ff 13%,var(--vscode-editorWidget-background));color:var(--vscode-descriptionForeground)}.safety strong{color:var(--vscode-foreground)}code{font-family:var(--vscode-editor-font-family)}.compact{padding:12px}.compact .hero{gap:12px;padding:14px;border-radius:10px}.compact .hero img{width:42px;height:42px}.compact .hero h1{font-size:20px}.compact .hero p{font-size:12px}.compact .eyebrow{font-size:9px}.compact .status{margin:12px 0;padding:10px}.compact .grid{display:block}.compact .card{margin:10px 0;padding:14px;border-radius:9px}.compact .grid .card:nth-child(4),.compact .safety{display:none}.compact .actions{grid-template-columns:1fr}.compact .actions button:first-child{grid-column:auto}.compact li{font-size:12px}.compact li span{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:500px){body{padding:16px}.hero{padding:18px}.actions{grid-template-columns:1fr}.actions button:first-child{grid-column:auto}.status{align-items:flex-start;flex-direction:column}}</style></head><body class="${layoutClass}">
 <header class="hero"><img src="${logo}" alt="GhostD"><div><p class="eyebrow">Local context ledger</p><h1>GhostD</h1><p>Keep agent context portable, revision-pinned, and out of the original chat.</p></div></header>
 <section class="status"><div><strong>${escapeHtml(connection)}</strong><span>${escapeHtml(workspace)}</span></div><button data-action="refresh">Refresh</button></section>
 <main class="grid"><section class="card"><h2>Actions</h2><div class="actions"><button class="primary" data-action="connect">Connect this workspace</button><button data-action="configureCodex">Configure Codex</button><button data-action="configureClaude">Configure Claude</button><button data-action="configureGemini">Configure Gemini CLI</button><button data-action="selectSession">Select session</button><button data-action="showContext">Show context</button><button data-action="copyHandoff">Copy branch handoff</button><button data-action="showHosts">Detected hosts</button><button data-action="disconnect">Disconnect</button></div></section><section class="card"><h2>Captured sessions</h2>${sessions}</section><section class="card"><h2>IDE agent hosts</h2>${hosts}</section><section class="card"><h2>Features &amp; terminal commands</h2><p>Capture documented lifecycle events, redact stored secrets, and create an exact context revision for sidecar questions.</p><p><code>ghost question "What is true now?"</code><br><code>ghost codex "…"</code> · <code>ghost claude "…"</code> · <code>ghost gemini "…"</code><br><code>ghost session list</code> · <code>ghost session use &lt;number&gt;</code></p></section></main><aside class="safety"><strong>Safety boundary.</strong> GhostD does not scrape chat panes, provider transcripts, credentials, window titles, or hidden extension storage. Detected hosts are not automatically captured.</aside>

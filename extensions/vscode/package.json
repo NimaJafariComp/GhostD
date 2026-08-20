@@ -2,7 +2,7 @@
   "name": "ghostd-vscode",
   "displayName": "GhostD",
   "description": "Inspect and select captured GhostD sessions from VS Code.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "publisher": "ghostd",
   "license": "Apache-2.0",
@@ -30,6 +30,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
+    "onView:ghostd.dashboardSidebar",
     "onCommand:ghostd.connect",
     "onCommand:ghostd.configureCodex",
     "onCommand:ghostd.configureClaude",
@@ -89,18 +90,32 @@
         "title": "GhostD: Refresh sessions"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ghostd",
+          "title": "GhostD",
+          "icon": "resources/ghostd-activity.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "ghostd": [
+        {
+          "type": "webview",
+          "id": "ghostd.dashboardSidebar",
+          "name": "Dashboard"
+        },
         {
           "id": "ghostd.sessions",
-          "name": "GhostD Sessions"
+          "name": "Captured Sessions"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "ghostd.sessions",
-        "contents": "GhostD keeps captured agent context portable and revision-pinned.\n[Open GhostD dashboard](command:ghostd.openDashboard)"
+        "contents": "No sessions captured in this workspace yet.\n[Open the GhostD dashboard](command:ghostd.openDashboard)"
       }
     ],
     "menus": {
