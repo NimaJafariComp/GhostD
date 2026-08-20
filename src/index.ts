@@ -1,0 +1,14 @@
+export { acpHandoff } from './acp/handoff.js';
+export { CodexAdapter } from './adapters/codex/adapter.js';
+export { ClaudeSourceAdapter } from './adapters/claude/source.js';
+export { ClaudeTargetAdapter } from './adapters/claude/target.js';
+export { GeminiSourceAdapter } from './adapters/gemini/source.js';
+export { GeminiTargetAdapter } from './adapters/gemini/target.js';
+export { IntegrationConfigStore } from './ecosystem/config.js';
+export { installVsCodeTasks } from './ecosystem/vscode.js';
+export type { IntegrationProvider, ProviderMode } from './ecosystem/config.js';
+export { GhostMcpServer, serveMcp } from './mcp/server.js';
+export type { GhostEvent, TrustClass } from './core/events.js';
+export type { ContextTargetAdapter } from './adapters/targets.js';
+export type { SourceAdapter } from './adapters/source.js';
+export { GhostDatabase } from './db/database.js';

@@ -12,12 +12,17 @@ import { ClaudeSourceAdapter } from '../adapters/claude/source.js';
 import { GeminiSourceAdapter } from '../adapters/gemini/source.js';
 import { ProviderCliManager, providerCliNames } from '../adapters/provider-cli.js';
 import type { ProviderCliName } from '../adapters/provider-cli.js';
+import { acpHandoff } from '../acp/handoff.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
+import { IntegrationConfigStore, integrationProviders, providerModes } from '../ecosystem/config.js';
+import type { IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
+import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
 import { ComparisonService } from '../reasoning/service.js';
 import { WriteBranchService } from '../write/service.js';
+import { serveMcp } from '../mcp/server.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
@@ -58,6 +63,11 @@ function usage(): string {
   ghost providers           Report which supported provider CLIs are installed.
   ghost providers install <codex|claude|gemini|missing>
                             Install selected missing provider CLIs from their official npm packages.
+  ghost configure <codex|claude|gemini|antigravity> <subscription|api>
+                            Record non-secret provider mode; credentials remain with the provider or environment.
+  ghost acp handoff <branch> Emit a provider-neutral ACP handoff pinned to a Ghost revision.
+  ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
+  ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
   ghost setup                Initialize local storage and the project Codex adapter.
   ghost codex-hook           Receive a Codex hook event on standard input.
   ghost claude-hook          Receive a Claude hook event on standard input.
@@ -67,6 +77,9 @@ function usage(): string {
 function isProviderCliName(value: string): value is ProviderCliName {
   return providerCliNames.includes(value as ProviderCliName);
 }
+
+function isIntegrationProvider(value: string): value is IntegrationProvider { return integrationProviders.includes(value as IntegrationProvider); }
+function isProviderMode(value: string): value is ProviderMode { return providerModes.includes(value as ProviderMode); }
 
 async function providers(arguments_: string[]): Promise<void> {
   const manager = new ProviderCliManager();
@@ -81,7 +94,7 @@ async function providers(arguments_: string[]): Promise<void> {
   }
 
   if (arguments_.at(0) !== 'install' || arguments_.length !== 2) {
-    throw new Error('Usage: ghost providers [install <codex|claude|gemini|missing>].');
+    throw new Error('Usage: ghost providers [install <codex|claude|gemini|antigravity|missing>].');
   }
   const provider = arguments_.at(1);
   if (provider === 'missing') {
@@ -90,11 +103,37 @@ async function providers(arguments_: string[]): Promise<void> {
     return;
   }
   if (provider === undefined || !isProviderCliName(provider)) {
-    throw new Error('Choose codex, claude, gemini, or missing.');
+    throw new Error('Choose codex, claude, gemini, antigravity, or missing.');
   }
   const status = await manager.install(provider);
   output.write(`${status.displayName} is installed. Sign in through its CLI before using it.\n`);
 }
+
+async function configure(arguments_: string[]): Promise<void> {
+  const provider = arguments_.at(0);
+  const mode = arguments_.at(1);
+  if (provider === undefined || mode === undefined || arguments_.length !== 2 || !isIntegrationProvider(provider) || !isProviderMode(mode)) {
+    throw new Error('Usage: ghost configure <codex|claude|gemini|antigravity> <subscription|api>.');
+  }
+  await new IntegrationConfigStore().setProvider(provider, mode);
+  output.write(`Configured ${provider} for ${mode} mode. GhostD did not store any credential.\n`);
+}
+
+async function acp(arguments_: string[]): Promise<void> {
+  if (arguments_.at(0) !== 'handoff' || arguments_.at(1) === undefined || arguments_.length !== 2) throw new Error('Usage: ghost acp handoff <branch>.');
+  const database = await GhostDatabase.open(databasePath());
+  try { output.write(`${JSON.stringify(acpHandoff(database, arguments_[1] as string), null, 2)}\n`); } finally { database.close(); }
+}
+
+async function vscode(arguments_: string[]): Promise<void> {
+  if (arguments_.at(0) !== 'setup' || arguments_.length !== 1) throw new Error('Usage: ghost vscode setup.');
+  const entryPath = process.argv[1];
+  if (entryPath === undefined) throw new Error('Unable to determine the Ghost CLI entry path.');
+  const taskPath = await installVsCodeTasks(process.cwd(), `${quoteForShell(process.execPath)} ${quoteForShell(resolve(entryPath))}`);
+  output.write(`VS Code GhostD tasks installed: ${taskPath}\n`);
+}
+
+function quoteForShell(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
 async function readIngestInput(filePath: string | undefined): Promise<string> {
   if (filePath !== undefined) {
@@ -506,6 +545,19 @@ async function main(): Promise<void> {
       return;
     case 'providers':
       await providers(arguments_);
+      return;
+    case 'configure':
+      await configure(arguments_);
+      return;
+    case 'acp':
+      await acp(arguments_);
+      return;
+    case 'mcp':
+      if (arguments_.length !== 0) throw new Error('Usage: ghost mcp.');
+      await serveMcp(databasePath(), input, output);
+      return;
+    case 'vscode':
+      await vscode(arguments_);
       return;
     case 'setup':
       await setup();

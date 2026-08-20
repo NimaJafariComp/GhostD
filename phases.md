@@ -95,10 +95,10 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 6 — Ecosystem integrations
 
-**Status:** Not started
+**Status:** Complete
 
-- [ ] Add ACP proxy support where it provides cleaner session ownership.
-- [ ] Add MCP as an interface to Ghost, not the Ghost core.
-- [ ] Publish the adapter SDK and compatibility ladder.
-- [ ] Add IDE/editor integrations only after CLI fidelity is proven.
-- [ ] antigravity integration.
+- [x] Add ACP proxy support where it provides cleaner session ownership. `ghost acp handoff <branch>` emits a revision- and workspace-pinned, provider-neutral payload with `providerSession: null`; it never claims ownership of hidden provider state.
+- [x] Add MCP as an interface to Ghost, not the Ghost core. `ghost mcp` provides a local JSON-RPC stdio server with read-only `ghost_context` and `ghost_branch_status` tools plus a latest-context resource; no MCP tool can write files, invoke providers, or promote code.
+- [x] Publish the adapter SDK and compatibility ladder. The public package entry point exports canonical events, source/target adapter contracts, Ghost database access, provider adapters, ACP handoffs, MCP server, and opt-in integration configuration.
+- [x] Add IDE/editor integrations only after CLI fidelity is proven. `ghost vscode setup` merges GhostD Context and MCP tasks into the current workspace’s `.vscode/tasks.json` without replacing existing tasks or extensions.
+- [x] Add Antigravity integration discovery. `ghost providers` detects the official `antigravity` executable and lets users record explicit `subscription` or `api` provider mode via `ghost configure`; credentials are never persisted by GhostD, and no unverified installer command is run.
