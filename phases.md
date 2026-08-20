@@ -120,26 +120,78 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 **Exit criterion:** Met for supported CLI hosts. A user can explicitly enable GhostD capture, see the exact host session and workspace GhostD is receiving, choose among simultaneous sessions when necessary, and remove the integration cleanly. GhostD never claims to capture an app, plugin, or session for which no verified integration is active.
 
-## Phase 7.1 — Verified desktop and IDE host integration
+## Phase 7.1 — Integration platform and local bridge
 
-**Status:** Planned — required before claiming universal active-session capture
+**Status:** Planned
 
-- [ ] Define a versioned capture contract and compatibility matrix for every non-CLI host. A detected application, installed extension, or provider account is not evidence that GhostD can capture it.
-- [ ] Validate Claude Desktop Code capture end-to-end using its documented shared Claude settings and hook contract. Record the host-supplied session identity and workspace; do not infer the foreground conversation from the Desktop UI.
-- [ ] Build a real GhostD VS Code extension that communicates with the local GhostD core through an explicit, authenticated local bridge. Its opt-in host signals are limited to workspace and editor/terminal activity; agent lifecycle and provider session IDs must come from a documented provider integration.
-- [ ] Treat Gemini CLI Companion as Gemini's own IDE-context channel, not as an undocumented GhostD data source. Bind Gemini sessions only through GhostD's documented Gemini hooks and, where available, an explicit public host-session contract.
-- [ ] Build, install, remove, and validate a GhostD Antigravity plugin against the documented plugin manifest and hooks contract. Do not mark Antigravity capture supported until a live session produces canonical events with provenance and clean removal has been verified.
-- [ ] Require explicit user selection whenever a host cannot supply an unambiguous active provider-session ID. Window focus, process names, terminal titles, local transcript files, and screen scraping are never session identity signals.
-- [ ] Test each supported host against a published version range, multiple simultaneous sessions, changed workspace state, hook/extension removal, provider outage, secrets in host payloads, and recovery after a host restart.
-- [ ] Report capture capability precisely: `supported and verified`, `installed but not configured`, `configured but inactive`, or `unsupported`. Never advertise “universal active-session capture” while any claimed host lacks this evidence.
+- [ ] Define a versioned, authenticated, local-only bridge between the GhostD package and editor clients.
+- [ ] Scope bridge requests to a workspace and expose only capture status, captured sessions, explicit selection, provenance-bearing context, branch status, and user-initiated handoffs.
+- [ ] Keep raw hook payloads, secrets, provider credentials, hidden transcripts, provider-control operations, and automatic promotion outside the bridge.
+- [ ] Define the capability states `supported and verified`, `installed but not configured`, `configured but inactive`, and `unsupported`.
 
-**Exit criterion:** GhostD has an end-to-end, version-pinned, user-consented capture integration for each desktop/editor host it claims to support. Every captured event is bound to a documented host/provider session and workspace, ambiguous sessions require user selection, and removal leaves provider configuration cleanly restored.
+**Exit criterion:** Any editor client can securely discover and select already-captured sessions through one stable GhostD interface, without receiving provider secrets or claiming a session it cannot identify.
+
+## Phase 7.2 — VS Code family and Codex workflow
+
+**Status:** Planned
+
+- [ ] Build one GhostD VS Code extension for VS Code-compatible editors, with workspace-scoped capture status, session list/selection, context inspection, and explicit handoff commands.
+- [ ] Connect the extension only to the Phase 7.1 bridge; it must not scrape Codex chats, inspect process state, or read provider transcripts.
+- [ ] Validate the end-to-end Codex-in-VS-Code workflow: `ghost setup codex --approve`, host trust, captured session visibility, explicit selection from the integrated terminal, simultaneous sessions, restart, and clean removal.
+- [ ] Publish to each applicable editor registry only after its compatibility and remote-workspace behavior are verified.
+
+**Exit criterion:** A Codex user in a verified VS Code-family host can identify and select the correct captured Codex session without focus guessing; the existing Codex project trust boundary remains intact.
+
+## Phase 7.3 — Claude Code CLI and Desktop Code tab
+
+**Status:** Planned
+
+- [ ] Keep the existing Claude project hook as the development integration and package the stable configuration as a versioned Claude plugin.
+- [ ] Validate the plugin across Claude Code CLI and the Desktop Code tab using documented lifecycle hooks and host-provided session/workspace data.
+- [ ] Test plugin install, upgrade, disable, uninstall, parallel sessions, host restart, provider failure, secret redaction, and exact cleanup.
+- [ ] Do not use Desktop UI scraping or treat a Desktop window as a session identity signal.
+
+**Exit criterion:** One verified Claude plugin captures both supported CLI and Desktop Code sessions with provenance, recovery, and clean removal.
+
+## Phase 7.4 — Gemini CLI and IDE-connected sessions
+
+**Status:** Planned
+
+- [ ] Harden and package Gemini lifecycle-hook setup, preserving Gemini's strict JSON stdout contract and existing user configuration.
+- [ ] Test Gemini CLI both standalone and connected to a verified editor workspace, including multiple sessions, workspace mismatches, hook failure, provider outage, and restart recovery.
+- [ ] Treat Gemini CLI Companion as Gemini's own IDE-context channel. GhostD may use only documented public contracts and never its private extension state.
+- [ ] Bind a Gemini session through hook-supplied identity; when identity is ambiguous, require `ghost session use <id>`.
+
+**Exit criterion:** Gemini CLI capture is reliable in both terminal and verified IDE workflows without hidden-state dependencies.
+
+## Phase 7.5 — Antigravity CLI plugin
+
+**Status:** Planned
+
+- [ ] Build the GhostD Antigravity plugin using the documented manifest, hooks, and MCP configuration contract.
+- [ ] Implement explicit install, status, disable, uninstall, and recovery behavior without overwriting unrelated Antigravity configuration.
+- [ ] Normalize documented Antigravity events into canonical GhostEvents with provenance, redaction, host session identity, and workspace scope.
+- [ ] Run live integration tests for install/remove, lifecycle capture, concurrent sessions, restart recovery, large output, secret redaction, and provider outage.
+
+**Exit criterion:** Antigravity becomes `supported and verified` only after a version-pinned, live plugin test captures canonical events and cleanly removes itself.
+
+## Phase 7.6 — JetBrains, Zed, and unsupported desktop agents
+
+**Status:** Planned discovery gate
+
+- [ ] Evaluate each host's stable public extension or ACP contract, lifecycle event coverage, session identity, workspace scope, configuration ownership, and removal semantics.
+- [ ] Build a separate editor client only when the contract supports the Phase 7.1 bridge and an unambiguous, user-consented session model.
+- [ ] For hosts without a verified contract, provide only explicit `ghost context` and read-only MCP handoffs; do not advertise source capture or active-session awareness.
+
+**Exit criterion:** Each evaluated host has either a verified implementation phase with a version range and test plan, or an explicit unsupported status with a safe handoff workflow.
+
+**Integration matrix:** [docs/host-integrations.md](docs/host-integrations.md) records the delivery ownership, capture authority, and verification matrix for every host above.
 
 ## Phase 8 — Distribution and universal installation
 
 **Status:** Planned
 
-**Release boundary:** Distribution may ship supported CLI-host capture, but must not market GhostD as providing universal active-session capture until Phase 7.1's per-host verification criteria are met.
+**Release boundary:** Distribution may ship supported CLI-host capture, but must not market GhostD as providing universal active-session capture until the relevant Phase 7.2–7.6 host verification criteria are met.
 
 - [ ] Define supported release channels, semantic-versioning policy, upgrade compatibility policy, and explicit platform support matrix.
 - [ ] Package the CLI for npm with a clean public package surface, executable entry point, provenance metadata, and install/update/uninstall documentation.
