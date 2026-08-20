@@ -200,6 +200,22 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 **Integration matrix:** [docs/host-integrations.md](docs/host-integrations.md) records the delivery ownership, capture authority, and verification matrix for every host above.
 
+## Phase 7.7 — Terminal-first sidecar questions
+
+**Status:** Planned — next implementation work
+
+**Scope boundary:** This phase is a read-only, terminal-first question workflow. It is not provider-session injection, a visible provider branch, a persistent Ghost branch, or a workspace-writing agent workflow.
+
+- [ ] Add `ghost question "…"` as the primary concise terminal command for asking what is true in a captured workspace.
+- [ ] Add an explicit, user-configured default answer provider, with validation and clear recovery guidance when it is missing or unavailable. The command must not silently select a provider or consume a provider credential without that configuration.
+- [ ] Resolve the selected current-workspace Ghost session automatically. When no session is resolvable, or more than one captured session is eligible and none is selected, refuse without guessing and direct the user to `ghost session list` and `ghost session use <id>`.
+- [ ] Create an exact revision and workspace snapshot at invocation, materialize a read-only answer ephemerally against that pinned context, print the answer and attribution in the terminal, and preserve the redacted materialization record in the Ghost ledger.
+- [ ] Leave the original Codex, Claude, Gemini, or other host chat untouched. Do not create, resume, inject into, or expose a provider-side conversation/session; provider handles remain disposable implementation details.
+- [ ] Treat host support precisely: the command has the same interface in every terminal, but automatic session resolution is available only for a verified, configured capture integration. Unsupported hosts require an explicit selected or imported Ghost session and must not be described as active-session-aware.
+- [ ] Test default-provider configuration, selected-session resolution, no-session failure, ambiguous-session refusal, exact revision/snapshot pinning, redacted persisted history, provider-unavailable recovery, and the invariant that the original host session and workspace are never mutated.
+
+**Exit criterion:** From any terminal in a workspace with one resolvable selected Ghost session and a configured provider, `ghost question "What is true right now?"` returns a revision-pinned ephemeral answer with provenance. It does not alter the original chat, create a managed provider session, branch, or workspace write. Ambiguity and missing configuration produce actionable refusal rather than a guessed choice.
+
 ## Phase 8 — Distribution and universal installation
 
 **Status:** Planned
