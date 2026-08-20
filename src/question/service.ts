@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { answerProviders } from '../ecosystem/config.js';
 import type { AnswerProvider } from '../ecosystem/config.js';
 import { GhostDatabase } from '../db/database.js';
 import { MaterializationService } from '../materialization/service.js';
@@ -27,6 +28,19 @@ export function resolveQuestionSession(database: GhostDatabase, workspaceCwd: st
   throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
 }
 
+/** Resolves the selected host's provider for the unqualified `ghost "…"` experience. */
+export function resolveQuestionProvider(database: GhostDatabase, workspaceCwd: string): { sessionId: string; provider: AnswerProvider } {
+  const sessionId = resolveQuestionSession(database, workspaceCwd);
+  const session = database.session(sessionId);
+  if (session === undefined) {
+    throw new Error(`Resolved Ghost session ${sessionId} no longer exists.`);
+  }
+  if (!answerProviders.includes(session.source as AnswerProvider)) {
+    throw new Error(`The selected ${session.source} session has no configured GhostD answer target. Use ghost codex, ghost claude, or ghost gemini explicitly.`);
+  }
+  return { sessionId, provider: session.source as AnswerProvider };
+}
+
 /**
  * A terminal sidecar question has no provider session and no user-managed branch.
  * The short-lived closed branch is an internal immutable-ledger anchor for its materialization run.
@@ -46,9 +60,14 @@ export class QuestionService {
     const branchName = `question-${this.nextId()}`;
     this.database.createBranch(branchName, revision.id, 'ephemeral');
     try {
-      return input.provider === 'claude'
-        ? await this.materialization.askClaude({ branchName, prompt: input.prompt, mode: 'ephemeral' })
-        : await this.materialization.askGemini({ branchName, prompt: input.prompt, mode: 'ephemeral' });
+      switch (input.provider) {
+        case 'codex':
+          return await this.materialization.askCodex({ branchName, prompt: input.prompt, mode: 'ephemeral' });
+        case 'claude':
+          return await this.materialization.askClaude({ branchName, prompt: input.prompt, mode: 'ephemeral' });
+        case 'gemini':
+          return await this.materialization.askGemini({ branchName, prompt: input.prompt, mode: 'ephemeral' });
+      }
     } finally {
       this.database.closeBranch(branchName);
     }

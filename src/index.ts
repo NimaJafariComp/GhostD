@@ -1,5 +1,6 @@
 export { acpHandoff } from './acp/handoff.js';
 export { CodexAdapter } from './adapters/codex/adapter.js';
+export { CodexTargetAdapter, codexSidecarArguments } from './adapters/codex/target.js';
 export { AntigravitySourceAdapter } from './adapters/antigravity/source.js';
 export { AntigravityPluginManager, bundledAntigravityPluginPath } from './adapters/antigravity/plugin.js';
 export { ClaudeSourceAdapter } from './adapters/claude/source.js';
@@ -7,7 +8,7 @@ export { ClaudeTargetAdapter } from './adapters/claude/target.js';
 export { GeminiSourceAdapter } from './adapters/gemini/source.js';
 export { GeminiTargetAdapter } from './adapters/gemini/target.js';
 export { IntegrationConfigStore } from './ecosystem/config.js';
-export { QuestionService, resolveQuestionSession } from './question/service.js';
+export { QuestionService, resolveQuestionProvider, resolveQuestionSession } from './question/service.js';
 export { desktopHostContract, desktopHostContracts, desktopHostIds } from './ecosystem/host-contracts.js';
 export { installVsCodeTasks } from './ecosystem/vscode.js';
 export { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, readLocalBridgeClientCredentials, requestLocalBridge, writeLocalBridgeClientCredentials } from './ecosystem/bridge.js';

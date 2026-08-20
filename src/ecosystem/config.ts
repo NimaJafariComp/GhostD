@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 export const integrationProviders = ['codex', 'claude', 'gemini', 'antigravity'] as const;
 export const providerModes = ['subscription', 'api'] as const;
-export const answerProviders = ['claude', 'gemini'] as const;
+export const answerProviders = ['codex', 'claude', 'gemini'] as const;
 
 export type IntegrationProvider = (typeof integrationProviders)[number];
 export type ProviderMode = (typeof providerModes)[number];

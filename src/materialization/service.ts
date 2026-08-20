@@ -1,4 +1,5 @@
 import { ClaudeApiError, ClaudeTargetAdapter } from '../adapters/claude/target.js';
+import { CodexTargetAdapter } from '../adapters/codex/target.js';
 import { GeminiApiError, GeminiTargetAdapter } from '../adapters/gemini/target.js';
 import { chooseMaterializationStrategy } from '../adapters/targets.js';
 import type { ContextTargetAdapter } from '../adapters/targets.js';
@@ -34,6 +35,7 @@ export class MaterializationService {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly clock: () => number = () => Date.now(),
     private readonly gemini: ContextTargetAdapter = new GeminiTargetAdapter(),
+    private readonly codex: ContextTargetAdapter = new CodexTargetAdapter(),
   ) {}
 
   public async askClaude(input: AskClaudeInput): Promise<AskClaudeResult> {
@@ -42,6 +44,10 @@ export class MaterializationService {
 
   public async askGemini(input: AskClaudeInput): Promise<AskClaudeResult> {
     return this.askTarget(input, this.gemini);
+  }
+
+  public async askCodex(input: AskClaudeInput): Promise<AskClaudeResult> {
+    return this.askTarget(input, this.codex);
   }
 
   private async askTarget(input: AskClaudeInput, target: ContextTargetAdapter): Promise<AskClaudeResult> {
@@ -111,7 +117,7 @@ function systemPrompt(provider: string, revision: GhostRevision, snapshot: Works
   return [
     `You are GhostD's read-only ${provider} target.`,
     'Answer only from the supplied Ghost context and the user ask. Do not assume hidden provider state.',
-    'You have no tools, workspace access, or authority to modify files, Git state, or Ghost history.',
+    'Do not use tools or workspace access. You have no authority to modify files, Git state, or Ghost history.',
     `Ghost revision: ${revision.id}`,
     `Workspace snapshot: ${snapshot.id}`,
   ].join('\n');

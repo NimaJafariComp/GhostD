@@ -8,7 +8,8 @@
   "description": "A local runtime for reconstructing transferable developer context.",
   "type": "module",
   "bin": {
-    "ghost": "./dist/cli/main.js"
+    "ghost": "./dist/cli/main.js",
+    "ghostd": "./dist/cli/main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run build --workspace ghostd-vscode",

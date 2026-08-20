@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,7 +27,7 @@ import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeSe
 import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
-import { QuestionService, resolveQuestionSession } from '../question/service.js';
+import { QuestionService, resolveQuestionProvider, resolveQuestionSession } from '../question/service.js';
 import { ComparisonService } from '../reasoning/service.js';
 import { WriteBranchService } from '../write/service.js';
 import { serveMcp } from '../mcp/server.js';
@@ -61,9 +60,13 @@ function usage(): string {
   ghost rebase <branch>     Explicitly advance a branch to its latest captured revision.
   ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
   ghost ask gemini <prompt> Ask Gemini ephemerally from the latest session checkpoint.
+  ghost ask codex <prompt> Ask Codex ephemerally from the latest session checkpoint.
   ghost ask <branch> <prompt>
                             Ask Claude from a persistent Ghost branch.
   ghost question <prompt>   Ask the configured default provider from the selected captured session.
+  ghost <codex|claude|gemini> <prompt>
+                            Ask that provider ephemerally from the selected captured session.
+  ghost <prompt>            Ask the provider of the selected captured session ephemerally.
   ghost compare <branch> <prompt>
                             Run Claude and Gemini against one frozen branch revision.
   ghost copy <source> <new-branch>
@@ -87,7 +90,7 @@ function usage(): string {
                             Install selected missing provider CLIs from their official npm packages.
   ghost configure <codex|claude|gemini|antigravity> <subscription|api>
                             Record non-secret provider mode; credentials remain with the provider or environment.
-  ghost configure default <claude|gemini>
+  ghost configure default <codex|claude|gemini>
                             Explicitly choose the default read-only answer provider.
   ghost acp handoff <branch> Emit a provider-neutral ACP handoff pinned to a Ghost revision.
   ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
@@ -163,14 +166,14 @@ async function configure(arguments_: string[]): Promise<void> {
   const mode = arguments_.at(1);
   if (provider === 'default') {
     if (mode === undefined || arguments_.length !== 2 || !isAnswerProvider(mode)) {
-      throw new Error('Usage: ghost configure default <claude|gemini>.');
+      throw new Error('Usage: ghost configure default <codex|claude|gemini>.');
     }
     await new IntegrationConfigStore().setDefaultAnswerProvider(mode);
     output.write(`Configured ${mode} as the default read-only answer provider. GhostD did not store any credential.\n`);
     return;
   }
   if (provider === undefined || mode === undefined || arguments_.length !== 2 || !isIntegrationProvider(provider) || !isProviderMode(mode)) {
-    throw new Error('Usage: ghost configure <codex|claude|gemini|antigravity> <subscription|api>, or ghost configure default <claude|gemini>.');
+    throw new Error('Usage: ghost configure <codex|claude|gemini|antigravity> <subscription|api>, or ghost configure default <codex|claude|gemini>.');
   }
   await new IntegrationConfigStore().setProvider(provider, mode);
   output.write(`Configured ${provider} for ${mode} mode. GhostD did not store any credential.\n`);
@@ -407,38 +410,56 @@ async function ask(arguments_: string[]): Promise<void> {
   const target = arguments_.at(0);
   const prompt = arguments_.slice(1).join(' ').trim();
   if (target === undefined || prompt.length === 0) {
-    throw new Error('Usage: ghost ask <claude|gemini|branch> <prompt>.');
+    throw new Error('Usage: ghost ask <codex|claude|gemini|branch> <prompt>.');
+  }
+  if (isAnswerProvider(target)) {
+    await providerQuestion(target, prompt);
+    return;
   }
 
   const database = await GhostDatabase.open(databasePath());
-  let ephemeralBranchName: string | undefined;
   try {
-    let branchName = target;
-    let mode: 'ephemeral' | 'persistent' = 'persistent';
-    let provider: 'claude' | 'gemini' = 'claude';
-    if (target === 'claude' || target === 'gemini') {
-      const sessionId = requiredSelectedSessionId(database);
-      const revision = database.createRevision(sessionId);
-      ephemeralBranchName = `ask-${randomUUID()}`;
-      database.createBranch(ephemeralBranchName, revision.id, 'ephemeral');
-      branchName = ephemeralBranchName;
-      mode = 'ephemeral';
-      provider = target;
-    } else if (database.branch(branchName) === undefined) {
-      throw new Error(`Unknown target ${target}. Use claude, gemini, or an existing branch name.`);
+    if (database.branch(target) === undefined) {
+      throw new Error(`Unknown target ${target}. Use codex, claude, gemini, or an existing branch name.`);
     }
 
     const service = new MaterializationService(database);
-    const result = provider === 'claude'
-      ? await service.askClaude({ branchName, prompt, mode })
-      : await service.askGemini({ branchName, prompt, mode });
+    const result = await service.askClaude({ branchName: target, prompt, mode: 'persistent' });
     output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
   } finally {
-    if (ephemeralBranchName !== undefined) {
-      database.closeBranch(ephemeralBranchName);
-    }
     database.close();
   }
+}
+
+async function providerQuestion(provider: AnswerProvider, prompt: string): Promise<void> {
+  if (prompt.length === 0) {
+    throw new Error(`Usage: ghost ${provider} <prompt>.`);
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const sessionId = resolveQuestionSession(database, process.cwd());
+    await materializeQuestion(database, sessionId, provider, prompt);
+  } finally {
+    database.close();
+  }
+}
+
+async function selectedProviderQuestion(prompt: string): Promise<void> {
+  if (prompt.length === 0) {
+    throw new Error('Usage: ghost <prompt>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const { sessionId, provider } = resolveQuestionProvider(database, process.cwd());
+    await materializeQuestion(database, sessionId, provider, prompt);
+  } finally {
+    database.close();
+  }
+}
+
+async function materializeQuestion(database: GhostDatabase, sessionId: string, provider: AnswerProvider, prompt: string): Promise<void> {
+  const result = await new QuestionService(database).ask({ sessionId, provider, prompt });
+  output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
 }
 
 async function question(arguments_: string[]): Promise<void> {
@@ -446,20 +467,11 @@ async function question(arguments_: string[]): Promise<void> {
   if (prompt.length === 0) {
     throw new Error('Usage: ghost question <prompt>.');
   }
-  const configuration = await new IntegrationConfigStore().load();
-  const provider = configuration.defaultAnswerProvider;
+  const provider = (await new IntegrationConfigStore().load()).defaultAnswerProvider;
   if (provider === undefined) {
-    throw new Error('No default answer provider is configured. Run ghost configure default <claude|gemini>.');
+    throw new Error('No default answer provider is configured. Run ghost configure default <codex|claude|gemini>.');
   }
-
-  const database = await GhostDatabase.open(databasePath());
-  try {
-    const sessionId = resolveQuestionSession(database, process.cwd());
-    const result = await new QuestionService(database).ask({ sessionId, provider, prompt });
-    output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
-  } finally {
-    database.close();
-  }
+  await providerQuestion(provider, prompt);
 }
 
 async function compare(arguments_: string[]): Promise<void> {
@@ -850,6 +862,11 @@ async function main(): Promise<void> {
     case 'question':
       await question(arguments_);
       return;
+    case 'codex':
+    case 'claude':
+    case 'gemini':
+      await providerQuestion(command, arguments_.join(' ').trim());
+      return;
     case 'compare':
       await compare(arguments_);
       return;
@@ -914,7 +931,11 @@ async function main(): Promise<void> {
       output.write(`${usage()}\n`);
       return;
     default:
-      throw new Error(`Unknown command: ${command}.\n\n${usage()}`);
+      if (command.startsWith('-')) {
+        throw new Error(`Unknown command: ${command}.\n\n${usage()}`);
+      }
+      await selectedProviderQuestion([command, ...arguments_].join(' ').trim());
+      return;
   }
 }
 

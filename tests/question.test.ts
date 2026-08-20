@@ -8,7 +8,7 @@ import type { ContextTargetAdapter, TargetRequest, TargetResult } from '../src/a
 import type { GhostEvent } from '../src/core/events.js';
 import { GhostDatabase } from '../src/db/database.js';
 import { MaterializationFailureError, MaterializationService } from '../src/materialization/service.js';
-import { QuestionService, resolveQuestionSession } from '../src/question/service.js';
+import { QuestionService, resolveQuestionProvider, resolveQuestionSession } from '../src/question/service.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -70,30 +70,62 @@ describe('terminal-first sidecar questions', () => {
     }
   });
 
-  it('pins the current revision, persists a redacted run, and leaves only a closed internal ephemeral anchor', async () => {
+  it('uses the selected captured session provider for an unqualified question and rejects unsupported sources', async () => {
+    const database = await openDatabase();
+    try {
+      database.append({ ...event('one', 'codex-session', 'Current objective.'), source: 'codex' });
+      expect(resolveQuestionProvider(database, '/work/ghost')).toMatchObject({ provider: 'codex' });
+
+      database.append({ ...event('two', 'claude-session', 'Current objective.'), source: 'claude' });
+      const claude = database.sessions('/work/ghost').find(({ sourceSessionId }) => sourceSessionId === 'claude-session');
+      expect(claude).toBeDefined();
+      database.setActiveSession('/work/ghost', claude?.id ?? 'missing');
+      expect(resolveQuestionProvider(database, '/work/ghost')).toMatchObject({ sessionId: claude?.id, provider: 'claude' });
+
+      const unsupported = await openDatabase();
+      unsupported.append({ ...event('three', 'antigravity-session', 'Current objective.'), source: 'antigravity' });
+      expect(() => resolveQuestionProvider(unsupported, '/work/ghost')).toThrow('has no configured GhostD answer target');
+      unsupported.close();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('takes a fresh captured-session checkpoint for every question, persists a redacted run, and leaves only closed internal ephemeral anchors', async () => {
     const database = await openDatabase();
     try {
       database.append(event('one', 'session-one', 'The current objective is safe.'));
       const requests: TargetRequest[] = [];
       const claude = target('claude', async (request) => {
         requests.push(request);
-        database.append(event('later', 'session-one', 'Later state must not enter this question.'));
+        if (requests.length === 1) {
+          database.append(event('later', 'session-one', 'Later state must not enter the first question.'));
+        }
         return { model: 'claude-test', text: 'API key: answer-secret', inputTokens: 2, outputTokens: 3 };
       });
       const gemini = target('gemini', async () => ({ model: 'gemini-test', text: 'unused' }));
       const materialization = new MaterializationService(database, claude, () => '2026-08-19T12:01:00.000Z', () => 10, gemini);
-      const result = await new QuestionService(database, materialization, () => 'fixed').ask({
+      const questions = new QuestionService(database, materialization, () => requests.length === 0 ? 'first' : 'second');
+      const result = await questions.ask({
         sessionId: 'session-one',
         provider: 'claude',
         prompt: 'What is true now?',
       });
+      const nextResult = await questions.ask({
+        sessionId: 'session-one',
+        provider: 'claude',
+        prompt: 'What changed?',
+      });
 
       expect(result.revision.eventHighWaterMark).toBe(1);
+      expect(nextResult.revision.eventHighWaterMark).toBe(2);
       expect(result.snapshot).toMatchObject({ cwd: '/work/ghost', gitHead: 'abc123', gitStatus: '' });
       expect(requests[0]?.prompt).toContain('The current objective is safe.');
-      expect(requests[0]?.prompt).not.toContain('Later state must not enter this question.');
+      expect(requests[0]?.prompt).not.toContain('Later state must not enter the first question.');
+      expect(requests[1]?.prompt).toContain('Later state must not enter the first question.');
       expect(result.run).toMatchObject({ mode: 'ephemeral', provider: 'claude', sourceRevisionId: result.revision.id, responseText: 'API key: [REDACTED]' });
-      expect(database.branch('question-fixed')).toMatchObject({ persistence: 'ephemeral', lifecycle: 'closed', headRevisionId: result.revision.id });
+      expect(database.branch('question-first')).toMatchObject({ persistence: 'ephemeral', lifecycle: 'closed', headRevisionId: result.revision.id });
+      expect(database.branch('question-second')).toMatchObject({ persistence: 'ephemeral', lifecycle: 'closed', headRevisionId: nextResult.revision.id });
       expect(database.eventsForSession('session-one')).toHaveLength(2);
     } finally {
       database.close();
@@ -116,6 +148,28 @@ describe('terminal-first sidecar questions', () => {
 
       expect(database.branch('question-failed')).toMatchObject({ persistence: 'ephemeral', lifecycle: 'closed' });
       expect(database.latestMaterializationRun('question-failed')).toMatchObject({ status: 'failed', recovery: expect.stringContaining('Ghost retained the source revision') });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('runs Codex through the same ephemeral revision-pinned sidecar path', async () => {
+    const database = await openDatabase();
+    try {
+      database.append(event('one', 'session-one', 'Current objective.'));
+      const claude = target('claude', async () => ({ model: 'claude-test', text: 'unused' }));
+      const gemini = target('gemini', async () => ({ model: 'gemini-test', text: 'unused' }));
+      const codex = target('codex', async () => ({ model: 'codex-test', text: 'Codex sidecar answer.' }));
+      const materialization = new MaterializationService(database, claude, () => '2026-08-19T12:01:00.000Z', () => 10, gemini, codex);
+
+      const result = await new QuestionService(database, materialization, () => 'codex').ask({
+        sessionId: 'session-one',
+        provider: 'codex',
+        prompt: 'What is true now?',
+      });
+
+      expect(result).toMatchObject({ text: 'Codex sidecar answer.', run: { provider: 'codex', mode: 'ephemeral', status: 'succeeded' } });
+      expect(database.branch('question-codex')).toMatchObject({ persistence: 'ephemeral', lifecycle: 'closed' });
     } finally {
       database.close();
     }
