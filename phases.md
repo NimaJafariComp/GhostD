@@ -135,14 +135,15 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.2 — VS Code family and Codex workflow
 
-**Status:** Planned
+**Status:** Complete for Visual Studio Code — compatible-editor registry verification and publication remain Phase 8 release work
 
-- [ ] Build one GhostD VS Code extension for VS Code-compatible editors, with workspace-scoped capture status, session list/selection, context inspection, and explicit handoff commands.
-- [ ] Connect the extension only to the Phase 7.1 bridge; it must not scrape Codex chats, inspect process state, or read provider transcripts.
-- [ ] Validate the end-to-end Codex-in-VS-Code workflow: `ghost setup codex --approve`, host trust, captured session visibility, explicit selection from the integrated terminal, simultaneous sessions, restart, and clean removal.
-- [ ] Publish to each applicable editor registry only after its compatibility and remote-workspace behavior are verified.
+- [x] Build one workspace-hosted GhostD extension against the stable VS Code API. It provides capture status, a sessions Explorer view, explicit session selection, provenance-bearing context inspection, read-only branch-handoff copy, and an explicit disconnect action.
+- [x] Connect the extension only to the Phase 7.1 authenticated bridge. The extension reads no editor text, Codex chat, provider transcript, process title, or window-focus state; its client credential is workspace-bound and stored in VS Code private storage.
+- [x] Add explicit setup/removal workflows: **Connect this workspace** writes a credential directly to private storage after confirmation; **Configure Codex capture** requires confirmation before running `ghost setup codex --approve`; **Disconnect** revokes the credential without removing a provider hook. Codex project trust remains user-controlled.
+- [x] Validate the Codex workflow boundary through core bridge tests, the extension bridge client against the real local bridge, and a real VS Code extension-host test that activates the extension and registers every command. A VSIX packaged from this source installed successfully into an isolated VS Code 1.133 extensions directory. Existing Codex-hook tests cover configured capture, trust-safe setup, concurrent-session ambiguity, selection, and recovery.
+- [x] Package the extension as a versioned VSIX-ready workspace. Registry publication is intentionally deferred to Phase 8, after release metadata, platform support, and registry policy are complete.
 
-**Exit criterion:** A Codex user in a verified VS Code-family host can identify and select the correct captured Codex session without focus guessing; the existing Codex project trust boundary remains intact.
+**Exit criterion:** Met for Visual Studio Code. A Codex user can explicitly configure capture, connect the workspace, identify and select the correct captured session without focus guessing, inspect safe context, copy a handoff, and revoke the extension credential. The existing Codex project trust boundary remains intact. Cursor and other forks are not claimed verified until their host and registry tests run in Phase 8.
 
 ## Phase 7.3 — Claude Code CLI and Desktop Code tab
 

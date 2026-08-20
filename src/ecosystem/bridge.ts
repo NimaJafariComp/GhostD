@@ -170,6 +170,17 @@ export class LocalBridgeClientRegistry {
   }
 }
 
+/** Writes editor credentials directly to that editor's private storage. The token is never printed by GhostD. */
+export async function writeLocalBridgeClientCredentials(path: string, credentials: LocalBridgeClientCredentials): Promise<void> {
+  if (!isAbsolute(path) || resolve(path) !== path) throw new Error('Credential path must be an absolute normalized path.');
+  parseClientCredentials(JSON.stringify(credentials));
+  await writePrivateJson(path, credentials);
+}
+
+export async function readLocalBridgeClientCredentials(path: string): Promise<LocalBridgeClientCredentials> {
+  return parseClientCredentials(await readFile(path, 'utf8'));
+}
+
 /** A local-only, authenticated JSON-lines bridge for editor clients. */
 export class LocalBridgeServer {
   private server: Server | undefined;
@@ -342,6 +353,20 @@ function parseRegistry(value: string): BridgeClientRegistryFile {
     clients[clientId] = { token: client['token'], workspaceCwd: assertWorkspaceCwd(client['workspaceCwd']), createdAt: client['createdAt'] };
   }
   return { version: 1, clients };
+}
+
+function parseClientCredentials(value: string): LocalBridgeClientCredentials {
+  const parsed = jsonRecord(value, 'GhostD local bridge credentials');
+  if (typeof parsed['clientId'] !== 'string' || !clientIdPattern.test(parsed['clientId']) || !isHexToken(parsed['token']) || typeof parsed['workspaceCwd'] !== 'string' || typeof parsed['endpoint'] !== 'string' || parsed['protocol'] !== localBridgeProtocol) {
+    throw new Error('GhostD local bridge credentials are invalid.');
+  }
+  return {
+    clientId: parsed['clientId'],
+    token: parsed['token'],
+    workspaceCwd: assertWorkspaceCwd(parsed['workspaceCwd']),
+    endpoint: parsed['endpoint'],
+    protocol: localBridgeProtocol,
+  };
 }
 
 function parseRequest(line: string): BridgeRequest {

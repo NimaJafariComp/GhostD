@@ -1,0 +1,89 @@
+{
+  "name": "ghostd-vscode",
+  "displayName": "GhostD",
+  "description": "Inspect and select captured GhostD sessions from VS Code.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "ghostd",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:ghostd.connect",
+    "onCommand:ghostd.configureCodex",
+    "onCommand:ghostd.selectSession",
+    "onCommand:ghostd.showContext",
+    "onCommand:ghostd.copyHandoff",
+    "onCommand:ghostd.refresh"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ghostd.connect",
+        "title": "GhostD: Connect this workspace"
+      },
+      {
+        "command": "ghostd.configureCodex",
+        "title": "GhostD: Configure Codex capture"
+      },
+      {
+        "command": "ghostd.selectSession",
+        "title": "GhostD: Select captured session"
+      },
+      {
+        "command": "ghostd.showContext",
+        "title": "GhostD: Show current context"
+      },
+      {
+        "command": "ghostd.copyHandoff",
+        "title": "GhostD: Copy branch handoff"
+      },
+      {
+        "command": "ghostd.disconnect",
+        "title": "GhostD: Disconnect this workspace"
+      },
+      {
+        "command": "ghostd.refresh",
+        "title": "GhostD: Refresh sessions"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "ghostd.sessions",
+          "name": "GhostD Sessions"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GhostD",
+      "properties": {
+        "ghostd.cliPath": {
+          "type": "string",
+          "default": "ghost",
+          "description": "Path or command name for the GhostD CLI used by this workspace extension host."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:extension-host": "node ./test/run-extension.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/test-electron": "^2.5.2",
+    "typescript": "^5.8.0"
+  }
+}

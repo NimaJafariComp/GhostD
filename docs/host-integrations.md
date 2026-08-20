@@ -28,12 +28,12 @@ Homebrew or npm package
 | Surface | Deliverable | Capture authority | Editor responsibility | Verification required |
 | --- | --- | --- | --- | --- |
 | Codex CLI | Project-hook adapter installed by `ghost setup codex --approve` | Documented Codex hook payload | GhostD VS Code extension displays capture and selection state | Fresh setup, trusted-project boundary, concurrent sessions, removal, restart recovery |
-| Codex in VS Code | Codex adapter plus GhostD VS Code extension | Same documented Codex hook; no chat scraping | Show the matching workspace and let the user select a captured session | Live VS Code integrated-terminal session and deliberate wrong-session rejection |
+| Codex in VS Code | Codex adapter plus GhostD VS Code extension | Same documented Codex hook; no chat scraping | Show the matching workspace, capture state, sessions, redacted context, and explicit handoffs | VS Code extension-host activation, bridge protocol, VSIX installation, wrong-session rejection, and Codex hook coverage |
 | Claude Code CLI | Project hook now; distributable Claude plugin after contract stabilization | Claude lifecycle hook payload | Optional VS Code UI only | Hook-event coverage, plugin install/update/uninstall, and provider failure recovery |
 | Claude Desktop Code tab | The same verified Claude plugin/hook | Claude hook payload supplied by the Code tab | No Desktop UI scraping | Local Desktop Code session, parallel sessions, restart, and clean plugin removal |
 | Gemini CLI | Project-hook adapter | Gemini lifecycle hook payload | Optional VS Code UI only | Strict JSON hook output, IDE-connected and standalone terminal sessions, failure recovery |
 | Gemini in VS Code, Cursor, or Antigravity | Gemini hook plus GhostD editor client where that editor supports it | Gemini hook or another documented public contract | Report opt-in workspace/editor context only | Verify no dependency on Gemini Companion's private state or transcript data |
-| VS Code family | One GhostD extension distributed through the applicable extension registry | No provider events by itself | Status, session list/selection, context inspection, explicit handoff actions | VS Code, Cursor, remote workspace behavior, extension disable/removal, and concurrent providers |
+| VS Code family | One GhostD extension, verified in Visual Studio Code and VSIX-ready; registry distribution is Phase 8 | No provider events by itself | Status, session list/selection, context inspection, explicit handoff actions, and credential revocation | VS Code extension-host activation, bridge protocol, VSIX installation, extension disconnect, and concurrent providers; verify each fork before claiming support |
 | Antigravity CLI | Native GhostD Antigravity plugin | Documented Antigravity plugin hook payload | Plugin may expose GhostD MCP configuration; it does not infer IDE focus | Install, hook payloads, unload/remove, restart, concurrent sessions, and secret redaction |
 | JetBrains and Zed | Separate editor clients only after a verified public API/ACP route exists | Their documented adapter contract, if any | Same local bridge and selection UI | Contract review, host-version compatibility tests, and explicit removal |
 | Other desktop agents | No source adapter by default | None | `ghost context` and read-only MCP handoff only | Do not advertise capture or active-session awareness |
@@ -41,7 +41,7 @@ Homebrew or npm package
 ## Delivery phases
 
 1. **Phase 7.1 — Integration platform and local bridge:** create the stable, local, authenticated interface that every editor client uses.
-2. **Phase 7.2 — VS Code family and Codex workflow:** deliver the shared VS Code extension and validate the Codex-in-VS-Code workflow without chat scraping.
+2. **Phase 7.2 — VS Code family and Codex workflow:** complete for Visual Studio Code. The shared VS Code extension uses the Phase 7.1 bridge, is VSIX-ready, and validates the Codex-in-VS-Code workflow boundary without chat scraping. Test each compatible editor and publish to its registry in Phase 8.
 3. **Phase 7.3 — Claude Code CLI and Desktop Code tab:** package and validate the Claude hook integration as a Claude plugin across both supported surfaces.
 4. **Phase 7.4 — Gemini CLI and IDE-connected sessions:** harden Gemini hook capture, verify it with explicit IDE association, and preserve the boundary around Gemini Companion.
 5. **Phase 7.5 — Antigravity CLI plugin:** build and live-validate Antigravity's native plugin integration.

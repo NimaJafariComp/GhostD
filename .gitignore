@@ -1,5 +1,8 @@
 node_modules/
 dist/
+extensions/vscode/dist/
+extensions/vscode/package-lock.json
+extensions/vscode/.vscode-test/
 coverage/
 .ghost/
 .codex/

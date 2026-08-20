@@ -2,14 +2,17 @@
   "name": "ghostd",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "extensions/vscode"
+  ],
   "description": "A local runtime for reconstructing transferable developer context.",
   "type": "module",
   "bin": {
     "ghost": "./dist/cli/main.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build --workspace ghostd-vscode",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace ghostd-vscode",
     "test": "vitest run"
   },
   "devDependencies": {

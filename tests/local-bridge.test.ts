@@ -4,9 +4,10 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, requestLocalBridge } from '../src/ecosystem/bridge.js';
+import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, readLocalBridgeClientCredentials, requestLocalBridge, writeLocalBridgeClientCredentials } from '../src/ecosystem/bridge.js';
 import type { GhostEvent } from '../src/core/events.js';
 import { GhostDatabase } from '../src/db/database.js';
+import { readBridgeCredentials as readVsCodeBridgeCredentials, requestBridge as requestVsCodeBridge } from '../extensions/vscode/src/bridge-client.js';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true }))));
@@ -48,6 +49,8 @@ describe('Phase 7.1 local bridge', () => {
     const configuration = await new LocalBridgeConfigurationStore(join(directory, 'bridge.json'), join(directory, 'bridge.sock')).loadOrCreate('2026-08-20T12:00:00.000Z');
     const registry = new LocalBridgeClientRegistry(join(directory, 'bridge-clients.json'));
     const client = await registry.register('vscode', workspace, configuration.endpoint, '2026-08-20T12:00:00.000Z');
+    const extensionCredentialPath = join(directory, 'vscode-storage', 'bridge.json');
+    await writeLocalBridgeClientCredentials(extensionCredentialPath, client);
     const server = new LocalBridgeServer({
       databasePath,
       configuration,
@@ -59,6 +62,7 @@ describe('Phase 7.1 local bridge', () => {
       expect((await stat(join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
       expect((await stat(join(directory, 'bridge-clients.json'))).mode & 0o777).toBe(0o600);
       expect(await requestLocalBridge(client, 'initialize')).toMatchObject({ protocol: 'ghostd/local-bridge/1' });
+      expect(await requestVsCodeBridge(await readVsCodeBridgeCredentials(extensionCredentialPath), 'initialize')).toMatchObject({ protocol: 'ghostd/local-bridge/1' });
       expect(await requestLocalBridge(client, 'capture/status')).toMatchObject({
         workspaceCwd: workspace,
         capabilities: [{ host: 'codex', state: 'supported and verified' }],
@@ -97,5 +101,9 @@ describe('Phase 7.1 local bridge', () => {
     expect(await registry.authenticate('vscode', second.token, workspace)).toBe(true);
     expect(await registry.revoke('vscode')).toBe(true);
     expect(await registry.authenticate('vscode', second.token, workspace)).toBe(false);
+    const credentialPath = join(directory, 'vscode', 'bridge.json');
+    await writeLocalBridgeClientCredentials(credentialPath, second);
+    expect(await readLocalBridgeClientCredentials(credentialPath)).toEqual(second);
+    expect((await stat(credentialPath)).mode & 0o777).toBe(0o600);
   });
 });

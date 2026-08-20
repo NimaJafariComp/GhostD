@@ -6,7 +6,7 @@ export { GeminiSourceAdapter } from './adapters/gemini/source.js';
 export { GeminiTargetAdapter } from './adapters/gemini/target.js';
 export { IntegrationConfigStore } from './ecosystem/config.js';
 export { installVsCodeTasks } from './ecosystem/vscode.js';
-export { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, requestLocalBridge } from './ecosystem/bridge.js';
+export { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, readLocalBridgeClientCredentials, requestLocalBridge, writeLocalBridgeClientCredentials } from './ecosystem/bridge.js';
 export type { IntegrationProvider, ProviderMode } from './ecosystem/config.js';
 export type { BridgeCapability, BridgeCapabilityState, LocalBridgeClientCredentials, LocalBridgeConfiguration } from './ecosystem/bridge.js';
 export { GhostMcpServer, serveMcp } from './mcp/server.js';

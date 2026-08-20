@@ -20,7 +20,7 @@ import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
 import { IntegrationConfigStore, integrationProviders, providerModes } from '../ecosystem/config.js';
 import type { IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
-import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer } from '../ecosystem/bridge.js';
+import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, writeLocalBridgeClientCredentials } from '../ecosystem/bridge.js';
 import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
@@ -85,6 +85,10 @@ function usage(): string {
   ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
   ghost bridge serve         Run the authenticated local editor bridge.
   ghost bridge status        Show local bridge status without exposing credentials.
+  ghost bridge register <client-id> <credential-file> --approve
+                            Register one workspace-bound editor client without printing its credential.
+  ghost bridge revoke <client-id> --approve
+                            Revoke one editor-client credential.
   ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
   ghost setup                Initialize local storage and show supported host-capture status.
   ghost setup <host> --approve
@@ -200,8 +204,29 @@ async function bridge(arguments_: string[]): Promise<void> {
     output.write('Credentials are not printed.\n');
     return;
   }
+  if (action === 'register') {
+    const clientId = arguments_.at(1);
+    const credentialPath = arguments_.at(2);
+    if (clientId === undefined || credentialPath === undefined || arguments_.at(3) !== '--approve' || arguments_.length !== 4) {
+      throw new Error('Usage: ghost bridge register <client-id> <credential-file> --approve.');
+    }
+    const configuration = await new LocalBridgeConfigurationStore().loadOrCreate();
+    const credentials = await new LocalBridgeClientRegistry().register(clientId, process.cwd(), configuration.endpoint);
+    await writeLocalBridgeClientCredentials(credentialPath, credentials);
+    output.write(`Registered GhostD editor client ${clientId} for ${process.cwd()}. Credentials were written directly to the requested private file.\n`);
+    return;
+  }
+  if (action === 'revoke') {
+    const clientId = arguments_.at(1);
+    if (clientId === undefined || arguments_.at(2) !== '--approve' || arguments_.length !== 3) {
+      throw new Error('Usage: ghost bridge revoke <client-id> --approve.');
+    }
+    const revoked = await new LocalBridgeClientRegistry().revoke(clientId);
+    output.write(revoked ? `Revoked GhostD editor client ${clientId}.\n` : `No GhostD editor client named ${clientId} is registered.\n`);
+    return;
+  }
   if (action !== 'serve' || arguments_.length !== 1) {
-    throw new Error('Usage: ghost bridge <serve|status>.');
+    throw new Error('Usage: ghost bridge <serve|status|register|revoke>.');
   }
   const configuration = await new LocalBridgeConfigurationStore().loadOrCreate();
   const server = new LocalBridgeServer({
