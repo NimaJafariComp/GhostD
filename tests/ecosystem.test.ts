@@ -33,7 +33,16 @@ describe('Phase 6 ecosystem integrations', () => {
     const store = new IntegrationConfigStore(join(directory, 'config.json'));
     await store.setProvider('claude', 'subscription', '2026-08-19T12:00:00.000Z');
     await store.setProvider('gemini', 'api', '2026-08-19T12:01:00.000Z');
-    expect(await store.load()).toEqual({ version: 1, providers: { claude: { mode: 'subscription', updatedAt: '2026-08-19T12:00:00.000Z' }, gemini: { mode: 'api', updatedAt: '2026-08-19T12:01:00.000Z' } } });
+    await store.setDefaultAnswerProvider('gemini');
+    expect(await store.load()).toEqual({ version: 1, providers: { claude: { mode: 'subscription', updatedAt: '2026-08-19T12:00:00.000Z' }, gemini: { mode: 'api', updatedAt: '2026-08-19T12:01:00.000Z' } }, defaultAnswerProvider: 'gemini' });
+  });
+
+  it('rejects an unknown persisted default answer provider', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ghostd-config-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'config.json');
+    await writeFile(path, JSON.stringify({ version: 1, providers: {}, defaultAnswerProvider: 'untrusted-provider' }));
+    await expect(new IntegrationConfigStore(path).load()).rejects.toThrow('Ghost configuration is invalid.');
   });
 
   it('serves only deterministic read-only context over MCP and ACP handoff boundaries', async () => {

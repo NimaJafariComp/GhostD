@@ -20,14 +20,15 @@ import { acpHandoff } from '../acp/handoff.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
-import { IntegrationConfigStore, integrationProviders, providerModes } from '../ecosystem/config.js';
-import type { IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
+import { IntegrationConfigStore, answerProviders, integrationProviders, providerModes } from '../ecosystem/config.js';
+import type { AnswerProvider, IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
 import { desktopHostContract, desktopHostContracts, desktopHostIds } from '../ecosystem/host-contracts.js';
 import type { DesktopHostId } from '../ecosystem/host-contracts.js';
 import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, writeLocalBridgeClientCredentials } from '../ecosystem/bridge.js';
 import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
 import { MaterializationService } from '../materialization/service.js';
+import { QuestionService, resolveQuestionSession } from '../question/service.js';
 import { ComparisonService } from '../reasoning/service.js';
 import { WriteBranchService } from '../write/service.js';
 import { serveMcp } from '../mcp/server.js';
@@ -62,6 +63,7 @@ function usage(): string {
   ghost ask gemini <prompt> Ask Gemini ephemerally from the latest session checkpoint.
   ghost ask <branch> <prompt>
                             Ask Claude from a persistent Ghost branch.
+  ghost question <prompt>   Ask the configured default provider from the selected captured session.
   ghost compare <branch> <prompt>
                             Run Claude and Gemini against one frozen branch revision.
   ghost copy <source> <new-branch>
@@ -85,6 +87,8 @@ function usage(): string {
                             Install selected missing provider CLIs from their official npm packages.
   ghost configure <codex|claude|gemini|antigravity> <subscription|api>
                             Record non-secret provider mode; credentials remain with the provider or environment.
+  ghost configure default <claude|gemini>
+                            Explicitly choose the default read-only answer provider.
   ghost acp handoff <branch> Emit a provider-neutral ACP handoff pinned to a Ghost revision.
   ghost mcp                  Run the read-only GhostD MCP server over standard input/output.
   ghost bridge serve         Run the authenticated local editor bridge.
@@ -123,6 +127,7 @@ function isAntigravityHookEvent(value: string): value is typeof antigravityHookE
 
 function isIntegrationProvider(value: string): value is IntegrationProvider { return integrationProviders.includes(value as IntegrationProvider); }
 function isProviderMode(value: string): value is ProviderMode { return providerModes.includes(value as ProviderMode); }
+function isAnswerProvider(value: string): value is AnswerProvider { return answerProviders.includes(value as AnswerProvider); }
 function isDesktopHostId(value: string): value is DesktopHostId { return desktopHostIds.includes(value as DesktopHostId); }
 
 async function providers(arguments_: string[]): Promise<void> {
@@ -156,8 +161,16 @@ async function providers(arguments_: string[]): Promise<void> {
 async function configure(arguments_: string[]): Promise<void> {
   const provider = arguments_.at(0);
   const mode = arguments_.at(1);
+  if (provider === 'default') {
+    if (mode === undefined || arguments_.length !== 2 || !isAnswerProvider(mode)) {
+      throw new Error('Usage: ghost configure default <claude|gemini>.');
+    }
+    await new IntegrationConfigStore().setDefaultAnswerProvider(mode);
+    output.write(`Configured ${mode} as the default read-only answer provider. GhostD did not store any credential.\n`);
+    return;
+  }
   if (provider === undefined || mode === undefined || arguments_.length !== 2 || !isIntegrationProvider(provider) || !isProviderMode(mode)) {
-    throw new Error('Usage: ghost configure <codex|claude|gemini|antigravity> <subscription|api>.');
+    throw new Error('Usage: ghost configure <codex|claude|gemini|antigravity> <subscription|api>, or ghost configure default <claude|gemini>.');
   }
   await new IntegrationConfigStore().setProvider(provider, mode);
   output.write(`Configured ${provider} for ${mode} mode. GhostD did not store any credential.\n`);
@@ -424,6 +437,27 @@ async function ask(arguments_: string[]): Promise<void> {
     if (ephemeralBranchName !== undefined) {
       database.closeBranch(ephemeralBranchName);
     }
+    database.close();
+  }
+}
+
+async function question(arguments_: string[]): Promise<void> {
+  const prompt = arguments_.join(' ').trim();
+  if (prompt.length === 0) {
+    throw new Error('Usage: ghost question <prompt>.');
+  }
+  const configuration = await new IntegrationConfigStore().load();
+  const provider = configuration.defaultAnswerProvider;
+  if (provider === undefined) {
+    throw new Error('No default answer provider is configured. Run ghost configure default <claude|gemini>.');
+  }
+
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const sessionId = resolveQuestionSession(database, process.cwd());
+    const result = await new QuestionService(database).ask({ sessionId, provider, prompt });
+    output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
+  } finally {
     database.close();
   }
 }
@@ -812,6 +846,9 @@ async function main(): Promise<void> {
       return;
     case 'ask':
       await ask(arguments_);
+      return;
+    case 'question':
+      await question(arguments_);
       return;
     case 'compare':
       await compare(arguments_);

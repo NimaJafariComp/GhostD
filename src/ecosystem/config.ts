@@ -4,9 +4,11 @@ import { dirname, join } from 'node:path';
 
 export const integrationProviders = ['codex', 'claude', 'gemini', 'antigravity'] as const;
 export const providerModes = ['subscription', 'api'] as const;
+export const answerProviders = ['claude', 'gemini'] as const;
 
 export type IntegrationProvider = (typeof integrationProviders)[number];
 export type ProviderMode = (typeof providerModes)[number];
+export type AnswerProvider = (typeof answerProviders)[number];
 
 export interface ProviderConfiguration {
   mode: ProviderMode;
@@ -16,6 +18,7 @@ export interface ProviderConfiguration {
 export interface GhostConfiguration {
   version: 1;
   providers: Partial<Record<IntegrationProvider, ProviderConfiguration>>;
+  defaultAnswerProvider?: AnswerProvider;
 }
 
 /** Stores non-secret integration intent only. Credentials remain in the provider CLI, OS keychain, or environment. */
@@ -36,11 +39,22 @@ export class IntegrationConfigStore {
   public async setProvider(provider: IntegrationProvider, mode: ProviderMode, updatedAt = new Date().toISOString()): Promise<GhostConfiguration> {
     const current = await this.load();
     const updated: GhostConfiguration = { ...current, providers: { ...current.providers, [provider]: { mode, updatedAt } } };
+    await this.write(updated);
+    return updated;
+  }
+
+  /** Records an explicit target choice only; GhostD never stores provider credentials. */
+  public async setDefaultAnswerProvider(provider: AnswerProvider): Promise<GhostConfiguration> {
+    const updated: GhostConfiguration = { ...(await this.load()), defaultAnswerProvider: provider };
+    await this.write(updated);
+    return updated;
+  }
+
+  private async write(configuration: GhostConfiguration): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await writeFile(temporary, `${JSON.stringify(configuration, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     await rename(temporary, this.path);
-    return updated;
   }
 }
 
@@ -62,5 +76,13 @@ function parseConfiguration(value: string): GhostConfiguration {
     if (!providerModes.includes(entry['mode'] as ProviderMode) || typeof entry['updatedAt'] !== 'string') throw new Error('Ghost configuration is invalid.');
     providers[provider] = { mode: entry['mode'] as ProviderMode, updatedAt: entry['updatedAt'] };
   }
-  return { version: 1, providers };
+  const defaultAnswerProvider = config['defaultAnswerProvider'];
+  if (defaultAnswerProvider !== undefined && !answerProviders.includes(defaultAnswerProvider as AnswerProvider)) {
+    throw new Error('Ghost configuration is invalid.');
+  }
+  return {
+    version: 1,
+    providers,
+    ...(defaultAnswerProvider === undefined ? {} : { defaultAnswerProvider: defaultAnswerProvider as AnswerProvider }),
+  };
 }

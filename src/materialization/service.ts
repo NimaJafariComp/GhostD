@@ -30,10 +30,10 @@ export class MaterializationFailureError extends Error {
 export class MaterializationService {
   public constructor(
     private readonly database: GhostDatabase,
-    private readonly claude: ClaudeTargetAdapter = new ClaudeTargetAdapter(),
+    private readonly claude: ContextTargetAdapter = new ClaudeTargetAdapter(),
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly clock: () => number = () => Date.now(),
-    private readonly gemini: GeminiTargetAdapter = new GeminiTargetAdapter(),
+    private readonly gemini: ContextTargetAdapter = new GeminiTargetAdapter(),
   ) {}
 
   public async askClaude(input: AskClaudeInput): Promise<AskClaudeResult> {
