@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 
 import * as vscode from 'vscode';
 
@@ -106,16 +106,38 @@ class GhostdController implements vscode.Disposable {
   }
 
   public async configureCodex(): Promise<void> {
+    await this.configureCapture('codex');
+  }
+
+  public async configureClaude(): Promise<void> {
+    await this.configureCapture('claude');
+  }
+
+  public async configureGemini(): Promise<void> {
+    await this.configureCapture('gemini');
+  }
+
+  private async configureCapture(host: 'codex' | 'claude' | 'gemini'): Promise<void> {
     const workspace = await this.workspace();
     if (workspace === undefined) return;
+    const provider = host === 'codex' ? 'Codex' : host === 'claude' ? 'Claude Code' : 'Gemini CLI';
+    const detail = host === 'codex'
+      ? 'Codex project trust remains a separate user-controlled requirement.'
+      : host === 'claude'
+        ? 'Claude Code applies this project hook in its VS Code extension and CLI.'
+        : 'This captures Gemini CLI sessions, including ones connected through the Gemini CLI Companion extension.';
     const approval = await vscode.window.showWarningMessage(
-      'Configure the documented GhostD Codex project hook? Codex project trust remains a separate user-controlled requirement.',
+      `Configure the documented GhostD ${provider} project hook? ${detail}`,
       { modal: true },
-      'Configure Codex capture',
+      `Configure ${provider} capture`,
     );
-    if (approval !== 'Configure Codex capture') return;
-    await this.runGhost(['setup', 'codex', '--approve'], workspace);
-    vscode.window.showInformationMessage('GhostD configured the Codex project hook. Approve project trust in Codex before hooks can run.');
+    if (approval !== `Configure ${provider} capture`) return;
+    await this.runGhost(['setup', host, '--approve'], workspace, host);
+    vscode.window.showInformationMessage(host === 'codex'
+      ? 'GhostD configured the Codex project hook. Approve project trust in Codex, then reload the Codex extension before hooks can run.'
+      : host === 'claude'
+        ? 'GhostD configured the Claude Code project hook. Start or resume a Claude Code VS Code session to begin capture.'
+        : 'GhostD configured the Gemini CLI project hook. Start or resume a Gemini CLI session; it can use the Gemini CLI Companion extension for IDE context.');
     await this.refresh(workspace);
   }
 
@@ -292,9 +314,9 @@ class GhostdController implements vscode.Disposable {
     throw new Error('GhostD local bridge did not become available. Check the GhostD output channel.');
   }
 
-  private async runGhost(arguments_: string[], workspace: vscode.WorkspaceFolder): Promise<string> {
+  private async runGhost(arguments_: string[], workspace: vscode.WorkspaceFolder, host?: 'codex' | 'claude' | 'gemini'): Promise<string> {
     return new Promise((resolveRun, rejectRun) => {
-      const child = spawn(this.cliPath(workspace), arguments_, { cwd: workspace.uri.fsPath, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+      const child = spawn(this.cliPath(workspace), arguments_, { cwd: workspace.uri.fsPath, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: this.commandEnvironment(workspace, host) });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -309,6 +331,20 @@ class GhostdController implements vscode.Disposable {
 
   private cliPath(workspace: vscode.WorkspaceFolder): string {
     return vscode.workspace.getConfiguration('ghostd', workspace.uri).get<string>('cliPath', 'ghost');
+  }
+
+  /**
+   * VS Code's GUI extension host does not inherit every terminal shell path.
+   * An explicit, absolute host CLI path is opt-in and only used while GhostD
+   * verifies and installs that host's documented project hook.
+   */
+  private commandEnvironment(workspace: vscode.WorkspaceFolder, host?: 'codex' | 'claude' | 'gemini'): NodeJS.ProcessEnv {
+    if (host === undefined) return process.env;
+    const configuredPath = vscode.workspace.getConfiguration('ghostd', workspace.uri).get<string>(`${host}CliPath`, '').trim();
+    if (!isAbsolute(configuredPath)) return process.env;
+    const pathKey = process.platform === 'win32' && process.env['Path'] !== undefined ? 'Path' : 'PATH';
+    const inheritedPath = process.env[pathKey] ?? '';
+    return { ...process.env, [pathKey]: `${dirname(configuredPath)}${delimiter}${inheritedPath}` };
   }
 
   private setStatus(text: string, tooltip: string, command: string): void {
@@ -337,6 +373,8 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionView,
     vscode.commands.registerCommand('ghostd.connect', () => controller.connect().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.configureCodex', () => controller.configureCodex().catch((error: unknown) => showCommandError(error))),
+    vscode.commands.registerCommand('ghostd.configureClaude', () => controller.configureClaude().catch((error: unknown) => showCommandError(error))),
+    vscode.commands.registerCommand('ghostd.configureGemini', () => controller.configureGemini().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.selectSession', (session?: CapturedSession) => controller.selectSession(session).catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.showContext', () => controller.showContext().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.copyHandoff', () => controller.copyHandoff().catch((error: unknown) => showCommandError(error))),

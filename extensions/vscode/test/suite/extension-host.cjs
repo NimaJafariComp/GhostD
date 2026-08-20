@@ -9,6 +9,8 @@ exports.run = async () => {
   for (const command of [
     'ghostd.connect',
     'ghostd.configureCodex',
+    'ghostd.configureClaude',
+    'ghostd.configureGemini',
     'ghostd.selectSession',
     'ghostd.showContext',
     'ghostd.copyHandoff',

@@ -2,7 +2,7 @@
   "name": "ghostd-vscode",
   "displayName": "GhostD",
   "description": "Inspect and select captured GhostD sessions from VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "publisher": "ghostd",
   "license": "Apache-2.0",
@@ -30,6 +30,8 @@
     "onStartupFinished",
     "onCommand:ghostd.connect",
     "onCommand:ghostd.configureCodex",
+    "onCommand:ghostd.configureClaude",
+    "onCommand:ghostd.configureGemini",
     "onCommand:ghostd.selectSession",
     "onCommand:ghostd.showContext",
     "onCommand:ghostd.copyHandoff",
@@ -44,6 +46,14 @@
       {
         "command": "ghostd.configureCodex",
         "title": "GhostD: Configure Codex capture"
+      },
+      {
+        "command": "ghostd.configureClaude",
+        "title": "GhostD: Configure Claude Code capture"
+      },
+      {
+        "command": "ghostd.configureGemini",
+        "title": "GhostD: Configure Gemini CLI capture"
       },
       {
         "command": "ghostd.selectSession",
@@ -81,6 +91,21 @@
           "type": "string",
           "default": "ghost",
           "description": "Path or command name for the GhostD CLI used by this workspace extension host."
+        },
+        "ghostd.codexCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the Codex CLI. Use this only when the VS Code extension host cannot find Codex on PATH; GhostD uses its directory while configuring Codex capture."
+        },
+        "ghostd.claudeCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the Claude Code CLI. Use this only when the VS Code extension host cannot find Claude on PATH; GhostD uses its directory while configuring Claude Code capture."
+        },
+        "ghostd.geminiCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the Gemini CLI. Use this only when the VS Code extension host cannot find Gemini on PATH; GhostD uses its directory while configuring Gemini CLI capture."
         }
       }
     }
