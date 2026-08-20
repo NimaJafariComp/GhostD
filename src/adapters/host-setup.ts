@@ -34,7 +34,8 @@ interface HookConfiguration {
   [key: string]: unknown;
 }
 
-const claudeEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'MessageDisplay', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PreCompact', 'PostCompact'] as const;
+/** Documented Claude lifecycle events captured by both project hooks and the distributable plugin. */
+export const claudeCaptureEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'MessageDisplay', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PreCompact', 'PostCompact'] as const;
 const geminiEvents = ['SessionStart', 'SessionEnd', 'BeforeAgent', 'AfterAgent', 'BeforeTool', 'AfterTool', 'PreCompress'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,7 +59,7 @@ function isHookConfiguration(value: unknown): value is HookConfiguration {
 
 function hostConfiguration(host: Exclude<CapturableHost, 'codex'>, workspace: string): { path: string; events: readonly string[] } {
   if (host === 'claude') {
-    return { path: join(workspace, '.claude', 'settings.local.json'), events: claudeEvents };
+    return { path: join(workspace, '.claude', 'settings.local.json'), events: claudeCaptureEvents };
   }
   return { path: join(workspace, '.gemini', 'settings.json'), events: geminiEvents };
 }

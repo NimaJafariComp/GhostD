@@ -1,0 +1,38 @@
+{
+  "description": "GhostD captures only documented Claude Code lifecycle hook input. It never reads Claude transcripts, hidden state, or credentials.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "MessageDisplay": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ],
+    "PostCompact": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/bin/ghostd-claude-hook.cjs"] }] }
+    ]
+  }
+}

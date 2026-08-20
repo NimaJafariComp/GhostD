@@ -38,8 +38,34 @@ describe('ClaudeSourceAdapter', () => {
   it('accepts documented streamed message-display events without reading a transcript', () => {
     const adapter = new ClaudeSourceAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'event-2');
 
-    expect(adapter.normalize({ hook_event_name: 'MessageDisplay', session_id: 'claude-session', text: 'Final answer.' })).toEqual([
+    expect(adapter.normalize({
+      hook_event_name: 'MessageDisplay',
+      session_id: 'claude-session',
+      delta: 'Final answer.',
+      transcript_path: '/private/provider/transcript.jsonl',
+    })).toEqual([
       expect.objectContaining({ type: 'assistant_message', payload: { text: 'Final answer.' } }),
+    ]);
+  });
+
+  it('uses documented provider error fields for failed tools and failed turns', () => {
+    const adapter = new ClaudeSourceAdapter(() => workspace, () => '2026-08-19T12:00:00.000Z', () => 'event-3');
+
+    expect(adapter.normalize({
+      hook_event_name: 'PostToolUseFailure',
+      session_id: 'claude-session',
+      tool_name: 'Bash',
+      error: 'Exit code 1\\nTests failed.',
+    })).toEqual([
+      expect.objectContaining({ type: 'tool_result', payload: { tool: 'Bash', output: 'Exit code 1\\nTests failed.' } }),
+    ]);
+    expect(adapter.normalize({
+      hook_event_name: 'StopFailure',
+      session_id: 'claude-session',
+      error: 'rate_limit',
+      error_details: '429 Too Many Requests',
+    })).toEqual([
+      expect.objectContaining({ type: 'turn_end', payload: { claudeEvent: 'turn_end', error: 'rate_limit', errorDetails: '429 Too Many Requests' } }),
     ]);
   });
 });

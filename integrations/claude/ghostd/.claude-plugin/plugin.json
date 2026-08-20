@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "ghostd",
+  "displayName": "GhostD",
+  "version": "0.1.1",
+  "description": "Captures documented Claude Code lifecycle events into GhostD's local, redacted context ledger.",
+  "author": {
+    "name": "GhostD"
+  },
+  "homepage": "https://github.com/NimaJafariComp/GhostD",
+  "repository": "https://github.com/NimaJafariComp/GhostD",
+  "keywords": [
+    "ghostd",
+    "context",
+    "hooks",
+    "local-first"
+  ]
+}

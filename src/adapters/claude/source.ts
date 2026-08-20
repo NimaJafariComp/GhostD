@@ -45,7 +45,7 @@ function canonicalType(name: string): GhostEventType | undefined {
 
 function payload(input: ClaudeHookInput, type: GhostEventType): Record<string, unknown> {
   const temporal = input['temporal'];
-  const text = stringValue(input, 'prompt', 'message', 'text', 'content', 'prompt_response');
+  const text = stringValue(input, 'prompt', 'message', 'text', 'content', 'prompt_response', 'delta');
   switch (type) {
     case 'user_message':
     case 'assistant_message':
@@ -59,11 +59,18 @@ function payload(input: ClaudeHookInput, type: GhostEventType): Record<string, u
     case 'tool_result':
       return {
         tool: stringValue(input, 'tool_name', 'toolName', 'tool') ?? 'unknown',
-        ...(input['tool_response'] === undefined ? {} : { output: input['tool_response'] }),
+        ...(input['tool_response'] === undefined && input['error'] === undefined
+          ? {}
+          : { output: input['tool_response'] ?? input['error'] }),
         ...(isRecord(temporal) ? { temporal } : {}),
       };
     default:
-      return { claudeEvent: type, ...(isRecord(temporal) ? { temporal } : {}) };
+      return {
+        claudeEvent: type,
+        ...(stringValue(input, 'error') === undefined ? {} : { error: stringValue(input, 'error') }),
+        ...(stringValue(input, 'error_details') === undefined ? {} : { errorDetails: stringValue(input, 'error_details') }),
+        ...(isRecord(temporal) ? { temporal } : {}),
+      };
   }
 }
 

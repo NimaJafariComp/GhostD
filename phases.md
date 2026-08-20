@@ -147,14 +147,18 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.3 — Claude Code CLI and Desktop Code tab
 
-**Status:** Planned
+**Status:** Implementation complete — Desktop Code-tab live validation pending an installed, authenticated Desktop host
 
-- [ ] Keep the existing Claude project hook as the development integration and package the stable configuration as a versioned Claude plugin.
-- [ ] Validate the plugin across Claude Code CLI and the Desktop Code tab using documented lifecycle hooks and host-provided session/workspace data.
-- [ ] Test plugin install, upgrade, disable, uninstall, parallel sessions, host restart, provider failure, secret redaction, and exact cleanup.
-- [ ] Do not use Desktop UI scraping or treat a Desktop window as a session identity signal.
+- [x] Keep the existing Claude project hook as the development integration and package the stable configuration as the versioned `ghostd` Claude plugin with a local marketplace manifest.
+- [x] Capture the documented Claude lifecycle set through native `hooks/hooks.json`; the plugin forwards stdin only to `ghost claude-hook`, uses no transcript, desktop UI, focus, credential, or hidden-provider-state access, and never emits hook decision-control output.
+- [x] Correct the Claude normalizer for documented streamed `MessageDisplay.delta` content and `PostToolUseFailure.error` / `StopFailure` provider-failure fields.
+- [x] Validate against Claude Code 2.1.237: strict plugin and marketplace validation; real local marketplace install; upgrade from the initial 0.1.0 package to 0.1.1; enable/disable/restart behavior; a bounded live Claude turn; and uninstall. The enabled plugin registered 11 hooks, captured lifecycle/user/assistant events with provenance, and added no events while disabled or uninstalled.
+- [x] Exercise the launcher with parallel session IDs, a tool failure, a provider failure, and a credential-shaped value. GhostD required explicit session selection for the parallel sessions, retained the failure state, and stored the credential-shaped value only as `[REDACTED]`.
+- [x] Preserve history after uninstall. Claude removes the plugin configuration immediately; its cache cleanup follows Claude's documented disposable-plugin lifecycle. GhostD's separate canonical ledger remains intact.
+- [ ] Run the same plugin in a local authenticated Claude Desktop **Code** tab and its plugin manager. This machine has no Claude Desktop installation, so GhostD does not claim that live-host check has occurred. Anthropic documents that Code Desktop runs the same engine and shares Claude Code hooks/configuration, which establishes the implementation contract but does not substitute for a host run.
+- [x] Do not use Desktop UI scraping or treat a Desktop window as a session identity signal.
 
-**Exit criterion:** One verified Claude plugin captures both supported CLI and Desktop Code sessions with provenance, recovery, and clean removal.
+**Exit criterion:** Pending only the local Claude Desktop Code-tab run. The CLI plugin is verified; GhostD will not claim Desktop source capture until that explicit host check passes.
 
 ## Phase 7.4 — Gemini CLI and IDE-connected sessions
 
