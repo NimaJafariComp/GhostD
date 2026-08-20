@@ -44,11 +44,11 @@ function canonicalType(input: GeminiHookInput): GhostEventType | undefined {
 function eventPayload(input: GeminiHookInput, type: GhostEventType): Record<string, unknown> {
   const temporal = input['temporal'];
   const temporalPayload = isRecord(temporal) ? { temporal } : {};
-  const text = stringValue(input, 'prompt', 'message', 'text', 'content', 'prompt_response');
   switch (type) {
     case 'user_message':
+      return { text: stringValue(input, 'prompt', 'message', 'text', 'content') ?? '[Gemini message content unavailable]', ...temporalPayload };
     case 'assistant_message':
-      return { text: text ?? '[Gemini message content unavailable]', ...temporalPayload };
+      return { text: stringValue(input, 'prompt_response', 'message', 'text', 'content', 'prompt') ?? '[Gemini message content unavailable]', ...temporalPayload };
     case 'tool_call':
       return {
         tool: stringValue(input, 'tool_name', 'toolName', 'tool') ?? 'unknown',
@@ -56,11 +56,17 @@ function eventPayload(input: GeminiHookInput, type: GhostEventType): Record<stri
         ...temporalPayload,
       };
     case 'tool_result':
-      return {
-        tool: stringValue(input, 'tool_name', 'toolName', 'tool') ?? 'unknown',
-        ...(input['tool_response'] === undefined ? {} : { output: input['tool_response'] }),
-        ...temporalPayload,
-      };
+      {
+        const response = input['tool_response'];
+        const output = isRecord(response) && response['error'] !== undefined
+          ? response['error']
+          : response;
+        return {
+          tool: stringValue(input, 'tool_name', 'toolName', 'tool') ?? 'unknown',
+          ...(output === undefined ? {} : { output }),
+          ...temporalPayload,
+        };
+      }
     default:
       return { geminiEvent: type, ...temporalPayload };
   }

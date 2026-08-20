@@ -36,11 +36,42 @@ describe('GeminiSourceAdapter', () => {
     expect(adapter.normalize({ hook_event_name: 'BeforeAgent', session_id: 'gemini-session', prompt: 'Investigate the failure.' })).toEqual([
       expect.objectContaining({ type: 'user_message', payload: { text: 'Investigate the failure.' } }),
     ]);
-    expect(adapter.normalize({ hook_event_name: 'AfterAgent', session_id: 'gemini-session', prompt_response: 'The failure is fixed.' })).toEqual([
+    expect(adapter.normalize({
+      hook_event_name: 'AfterAgent',
+      session_id: 'gemini-session',
+      prompt: 'Investigate the failure.',
+      prompt_response: 'The failure is fixed.',
+    })).toEqual([
       expect.objectContaining({ type: 'assistant_message', payload: { text: 'The failure is fixed.' } }),
     ]);
     expect(adapter.normalize({ hook_event_name: 'AfterTool', session_id: 'gemini-session', tool_name: 'run_shell_command', tool_response: { output: 'ok' } })).toEqual([
       expect.objectContaining({ type: 'tool_result', payload: { tool: 'run_shell_command', output: { output: 'ok' } } }),
     ]);
+    expect(adapter.normalize({
+      hook_event_name: 'AfterTool',
+      session_id: 'gemini-session',
+      tool_name: 'run_shell_command',
+      tool_response: { error: 'Exit code 1\\nTests failed.', returnDisplay: 'ignored when error is present' },
+    })).toEqual([
+      expect.objectContaining({ type: 'tool_result', payload: { tool: 'run_shell_command', output: 'Exit code 1\\nTests failed.' } }),
+    ]);
+  });
+
+  it('uses the hook-supplied workspace instead of inferring a host session workspace', () => {
+    const adapter = new GeminiSourceAdapter(
+      (cwd) => ({ cwd, gitHead: cwd === '/work/right' ? 'right-head' : 'wrong-head', gitStatus: '' }),
+      () => '2026-08-19T12:00:00.000Z',
+      () => 'event-workspace',
+    );
+
+    expect(adapter.normalize({
+      hook_event_name: 'BeforeAgent',
+      session_id: 'gemini-workspace-session',
+      cwd: '/work/right',
+      prompt: 'Use the documented workspace.',
+    })[0]).toMatchObject({
+      sessionId: 'gemini-workspace-session',
+      workspace: { cwd: '/work/right', gitHead: 'right-head' },
+    });
   });
 });

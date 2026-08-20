@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "name": "ghostd-capture-session-start", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "name": "ghostd-capture-session-end", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "BeforeAgent": [
+      { "hooks": [{ "name": "ghostd-capture-before-agent", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "AfterAgent": [
+      { "hooks": [{ "name": "ghostd-capture-after-agent", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "BeforeTool": [
+      { "hooks": [{ "name": "ghostd-capture-before-tool", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "AfterTool": [
+      { "hooks": [{ "name": "ghostd-capture-after-tool", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ],
+    "PreCompress": [
+      { "hooks": [{ "name": "ghostd-capture-pre-compress", "type": "command", "command": "node \"${extensionPath}${/}bin${/}ghostd-gemini-hook.cjs\"", "timeout": 10000 }] }
+    ]
+  }
+}

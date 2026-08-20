@@ -162,14 +162,17 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.4 — Gemini CLI and IDE-connected sessions
 
-**Status:** Planned
+**Status:** Implementation complete — Gemini CLI capture verified; a real Gemini Companion editor session and provider session-continuity contract remain host-validation gates
 
-- [ ] Harden and package Gemini lifecycle-hook setup, preserving Gemini's strict JSON stdout contract and existing user configuration.
-- [ ] Test Gemini CLI both standalone and connected to a verified editor workspace, including multiple sessions, workspace mismatches, hook failure, provider outage, and restart recovery.
-- [ ] Treat Gemini CLI Companion as Gemini's own IDE-context channel. GhostD may use only documented public contracts and never its private extension state.
-- [ ] Bind a Gemini session through hook-supplied identity; when identity is ambiguous, require `ghost session use <id>`.
+- [x] Package GhostD as a versioned native Gemini CLI extension. Its documented lifecycle hooks forward stdin only to `ghost gemini-hook`, preserve existing Gemini configuration, set a bounded 10-second timeout, and always emit exactly `{}` to stdout so capture cannot control Gemini's flow.
+- [x] Correct Gemini `AfterAgent` normalization to prefer the documented final response over the original prompt, and preserve documented `AfterTool` error text as a canonical tool failure.
+- [x] Test standalone Gemini CLI 0.56.0: extension validation, install, update, restart, disable/enable, live capture, a deliberate invalid-key provider outage, unavailable/failed GhostD launcher recovery, workspace binding, and strict JSON stdout. No credential is stored by GhostD or the extension.
+- [x] Treat Gemini CLI Companion as Gemini's own IDE-context channel. GhostD reads neither Companion state nor transcripts, editor text, terminal titles, focus, or credentials; it relies only on documented hook payloads and the optional GhostD editor client.
+- [x] Bind a Gemini session through hook-supplied identity; when identity is ambiguous, require `ghost session use <id>` rather than merging based on CWD, timing, or process information.
+- [ ] Run the same extension in a supported editor with the official Gemini CLI Companion. This machine has no verified Companion-connected editor workspace, so GhostD does not claim IDE-session capture validation.
+- [ ] Obtain or verify a Gemini CLI contract that keeps all lifecycle events for one turn under a single provider session ID. Gemini CLI 0.56.0 headless live runs supplied different IDs for the request and response lifecycle events. GhostD deliberately retains those as distinct host sessions instead of guessing that they belong together.
 
-**Exit criterion:** Gemini CLI capture is reliable in both terminal and verified IDE workflows without hidden-state dependencies.
+**Exit criterion:** Pending the two explicit host gates above. Terminal capture is verified and safe; GhostD will not claim a unified active Gemini session or an IDE workflow until Gemini provides a validated session-continuity path and the public Companion workflow is exercised.
 
 ## Phase 7.5 — Antigravity CLI plugin
 

@@ -31,8 +31,8 @@ Homebrew or npm package
 | Codex in VS Code | Codex adapter plus GhostD VS Code extension | Same documented Codex hook; no chat scraping | Show the matching workspace, capture state, sessions, redacted context, and explicit handoffs | VS Code extension-host activation, bridge protocol, VSIX installation, wrong-session rejection, and Codex hook coverage |
 | Claude Code CLI | Versioned `ghostd` Claude plugin, with the project hook retained for development | Documented Claude lifecycle hook payload | Optional VS Code UI only | Complete: strict manifest validation; install, update, disable/enable, restart, live capture, failure/redaction, and uninstall on Claude Code 2.1.237 |
 | Claude Desktop Code tab | The same native Claude plugin/hook | Claude hook payload supplied by the Code tab | No Desktop UI scraping | Implementation contract verified through Claude's shared Code/CLI configuration; a local authenticated Desktop Code-tab run remains required before claiming verified host support |
-| Gemini CLI | Project-hook adapter | Gemini lifecycle hook payload | Optional VS Code UI only | Strict JSON hook output, IDE-connected and standalone terminal sessions, failure recovery |
-| Gemini in VS Code, Cursor, or Antigravity | Gemini hook plus GhostD editor client where that editor supports it | Gemini hook or another documented public contract | Report opt-in workspace/editor context only | Verify no dependency on Gemini Companion's private state or transcript data |
+| Gemini CLI | Versioned native `ghostd` Gemini CLI extension, with the project hook retained for development | Documented Gemini lifecycle hook payload | Optional VS Code UI only | Terminal capture verified on Gemini CLI 0.56.0: manifest validation, install/update/restart, disable/enable, live capture, provider outage, and non-blocking hook recovery. Provider session continuity remains a host gate because headless lifecycle events supplied divergent session IDs. |
+| Gemini in VS Code, Cursor, or Antigravity | Gemini hook plus GhostD editor client where that editor supports it | Gemini hook or another documented public contract | Report opt-in workspace/editor context only | Verify a public Companion-connected editor workflow, without Companion-private state or transcript data, before claiming support |
 | VS Code family | One GhostD extension, verified in Visual Studio Code and VSIX-ready; registry distribution is Phase 8 | No provider events by itself | Status, session list/selection, context inspection, explicit handoff actions, and credential revocation | VS Code extension-host activation, bridge protocol, VSIX installation, extension disconnect, and concurrent providers; verify each fork before claiming support |
 | Antigravity CLI | Native GhostD Antigravity plugin | Documented Antigravity plugin hook payload | Plugin may expose GhostD MCP configuration; it does not infer IDE focus | Install, hook payloads, unload/remove, restart, concurrent sessions, and secret redaction |
 | JetBrains and Zed | Separate editor clients only after a verified public API/ACP route exists | Their documented adapter contract, if any | Same local bridge and selection UI | Contract review, host-version compatibility tests, and explicit removal |
@@ -43,7 +43,7 @@ Homebrew or npm package
 1. **Phase 7.1 — Integration platform and local bridge:** create the stable, local, authenticated interface that every editor client uses.
 2. **Phase 7.2 — VS Code family and Codex workflow:** complete for Visual Studio Code. The shared VS Code extension uses the Phase 7.1 bridge, is VSIX-ready, and validates the Codex-in-VS-Code workflow boundary without chat scraping. Test each compatible editor and publish to its registry in Phase 8.
 3. **Phase 7.3 — Claude Code CLI and Desktop Code tab:** the versioned Claude plugin and CLI verification are complete. Run the remaining local Desktop Code-tab check before claiming Desktop source capture.
-4. **Phase 7.4 — Gemini CLI and IDE-connected sessions:** harden Gemini hook capture, verify it with explicit IDE association, and preserve the boundary around Gemini Companion.
+4. **Phase 7.4 — Gemini CLI and IDE-connected sessions:** the native Gemini CLI extension and safe terminal capture are complete. Validate a real public Gemini Companion editor workflow and Gemini's single-session lifecycle continuity before claiming IDE or unified-session support.
 5. **Phase 7.5 — Antigravity CLI plugin:** build and live-validate Antigravity's native plugin integration.
 6. **Phase 7.6 — JetBrains, Zed, and unsupported desktop agents:** run public-contract discovery. Create a host implementation only when its API can satisfy GhostD's safety and session-identity requirements.
 
@@ -67,7 +67,7 @@ The currently implemented methods are `capture/status`, `sessions/list`, `sessio
 
 ## Release gates
 
-1. Package release can support the verified Codex, Claude Code, and Gemini CLI adapters already implemented.
+1. Package release can support the verified Codex and Claude Code adapters. Gemini CLI may be shipped as capture-only with explicit-session selection; do not claim unified-session or IDE support until Phase 7.4's two remaining host gates pass.
 2. A host moves from `unsupported` to `supported and verified` only after its row's verification suite passes on a pinned host-version range.
 3. The word “universal” refers to GhostD's package and adapter model, not to automatic capture of every installed desktop app.
 4. “Universal active-session capture” is prohibited in product copy until every advertised desktop/editor host passes its release gate.

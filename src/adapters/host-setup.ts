@@ -36,7 +36,8 @@ interface HookConfiguration {
 
 /** Documented Claude lifecycle events captured by both project hooks and the distributable plugin. */
 export const claudeCaptureEvents = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'MessageDisplay', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PreCompact', 'PostCompact'] as const;
-const geminiEvents = ['SessionStart', 'SessionEnd', 'BeforeAgent', 'AfterAgent', 'BeforeTool', 'AfterTool', 'PreCompress'] as const;
+/** Documented Gemini CLI lifecycle events captured by both project hooks and the distributable extension. */
+export const geminiCaptureEvents = ['SessionStart', 'SessionEnd', 'BeforeAgent', 'AfterAgent', 'BeforeTool', 'AfterTool', 'PreCompress'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -61,7 +62,7 @@ function hostConfiguration(host: Exclude<CapturableHost, 'codex'>, workspace: st
   if (host === 'claude') {
     return { path: join(workspace, '.claude', 'settings.local.json'), events: claudeCaptureEvents };
   }
-  return { path: join(workspace, '.gemini', 'settings.json'), events: geminiEvents };
+  return { path: join(workspace, '.gemini', 'settings.json'), events: geminiCaptureEvents };
 }
 
 async function readConfiguration(path: string): Promise<HookConfiguration | undefined> {
