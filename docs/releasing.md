@@ -7,9 +7,43 @@ Homebrew tap for macOS and Linux. Homebrew Core is deliberately out of scope
 until GhostD is public, licensed for redistribution, stable, and meets
 Homebrew's formula requirements.
 
-The current repository is `UNLICENSED` and no npm package or Homebrew tap has
-been published. The commands below are release-operator procedures, not
-end-user installation claims.
+The current repository is `UNLICENSED` and no npm registry package or Homebrew
+tap has been published. GitHub Releases are available as a private-repository
+distribution channel once a matching version tag is pushed. The commands below
+are release-operator procedures, not end-user installation claims.
+
+## GitHub Releases and private installation
+
+Pushing a tag matching the package version, such as `v0.1.0`, runs the release
+workflow. It verifies the project, creates the npm tarball and SHA-256 file,
+performs a fresh isolated install test, packages the VS Code extension, and
+creates a GitHub Release containing those assets.
+
+For a private repository, download release assets through an authenticated GitHub
+CLI session. This avoids placing a token in an install URL or package config:
+
+```sh
+gh auth login
+gh release download v0.1.0 \
+  --repo NimaJafariComp/GhostD \
+  --pattern 'ghostd-0.1.0.tgz' \
+  --dir ./ghostd-release
+
+npm install --global ./ghostd-release/ghostd-0.1.0.tgz
+ghost doctor
+```
+
+To test a tarball without changing the global npm installation:
+
+```sh
+npm run release:install-test -- ./ghostd-release/ghostd-0.1.0.tgz
+```
+
+Uninstalling the CLI does not remove local Ghost history or provider settings:
+
+```sh
+npm uninstall --global ghostd
+```
 
 ## Compatibility policy
 
@@ -44,8 +78,9 @@ be advertised as captured: [host integrations](host-integrations.md).
 
 1. Run `npm ci` and `npm run release:verify` on each platform in the matrix.
    The GitHub workflow performs this baseline check.
-2. Run `npm run release:artifact -- ./release-artifacts` to create the npm
-   tarball and its SHA-256 file. Preserve both as immutable release assets.
+2. Push a matching `v<package-version>` tag. GitHub verifies the release,
+   creates the npm tarball, SHA-256 file, and VSIX, runs the isolated install
+   test, and attaches the immutable assets to a GitHub Release.
 3. In a clean temporary prefix, install the tarball with npm, run `ghost
    doctor`, `ghost --help`, and confirm that a missing provider produces a
    recoverable error without creating a provider credential or host hook.

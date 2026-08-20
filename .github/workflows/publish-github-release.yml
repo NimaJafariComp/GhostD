@@ -1,0 +1,39 @@
+name: Publish GitHub release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - id: package
+        name: Require tag and package version to match
+        shell: bash
+        run: |
+          version="$(node -p \"require('./package.json').version\")"
+          test "v${version}" = "${GITHUB_REF_NAME}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - run: npm run release:verify
+      - run: npm run release:artifact -- release-artifacts
+      - run: npm run release:install-test -- release-artifacts/ghostd-${{ steps.package.outputs.version }}.tgz
+      - run: npm run release:vsix -- release-artifacts
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-artifacts/* \
+            --title "GhostD ${GITHUB_REF_NAME}" \
+            --generate-notes

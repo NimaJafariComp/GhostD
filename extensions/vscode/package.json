@@ -6,6 +6,10 @@
   "private": true,
   "publisher": "ghostd",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NimaJafariComp/GhostD"
+  },
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -13,6 +17,11 @@
     "Other"
   ],
   "main": "./dist/extension.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "extensionKind": [
     "workspace"
   ],
