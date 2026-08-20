@@ -35,8 +35,9 @@ Homebrew or npm package
 | Gemini in VS Code, Cursor, or Antigravity | Gemini hook plus GhostD editor client where that editor supports it | Gemini hook or another documented public contract | Report opt-in workspace/editor context only | Verify a public Companion-connected editor workflow, without Companion-private state or transcript data, before claiming support |
 | VS Code family | One GhostD extension, verified in Visual Studio Code and VSIX-ready; registry distribution is Phase 8 | No provider events by itself | Status, session list/selection, context inspection, explicit handoff actions, and credential revocation | VS Code extension-host activation, bridge protocol, VSIX installation, extension disconnect, and concurrent providers; verify each fork before claiming support |
 | Antigravity CLI | Native `ghostd` Antigravity plugin | Documented Antigravity lifecycle and post-tool payloads | Plugin exposes only GhostD's read-only MCP server; it does not infer IDE focus or alter permissions | Plugin lifecycle verified on `agy` 1.1.16: install/list, MCP/hook discovery, disable/enable, uninstall, and strict direct-hook ingestion. An authenticated agent-turn suite remains required before claiming verified host capture. |
-| JetBrains and Zed | Separate editor clients only after a verified public API/ACP route exists | Their documented adapter contract, if any | Same local bridge and selection UI | Contract review, host-version compatibility tests, and explicit removal |
-| Other desktop agents | No source adapter by default | None | `ghost context` and read-only MCP handoff only | Do not advertise capture or active-session awareness |
+| JetBrains IDEs | No source adapter or editor client at this time | No verified public observer for an existing AI Chat/ACP conversation | `ghost context`, read-only MCP, or exact-revision ACP handoff only | Discovery complete: JetBrains ACP can launch an agent but does not grant GhostD access to host-owned session history. Require a user-consented lifecycle/session contract before implementation. |
+| Zed | No source adapter or editor client at this time | No verified public observer for an existing agent or terminal thread | `ghost context`, read-only MCP, or exact-revision ACP handoff only | Discovery complete: Zed can start external ACP agents and MCP servers but does not expose an active-thread observer. Require a user-consented lifecycle/session contract before implementation. |
+| Other desktop agents | No source adapter by default | None | `ghost context` and read-only MCP handoff only | Explicitly unsupported until a host-specific public contract and live test pass |
 
 ## Delivery phases
 
@@ -45,9 +46,9 @@ Homebrew or npm package
 3. **Phase 7.3 — Claude Code CLI and Desktop Code tab:** the versioned Claude plugin and CLI verification are complete. Run the remaining local Desktop Code-tab check before claiming Desktop source capture.
 4. **Phase 7.4 — Gemini CLI and IDE-connected sessions:** the native Gemini CLI extension and safe terminal capture are complete. Validate a real public Gemini Companion editor workflow and Gemini's single-session lifecycle continuity before claiming IDE or unified-session support.
 5. **Phase 7.5 — Antigravity CLI plugin:** the native plugin and local lifecycle validation are complete. Run an authenticated agent-turn suite before claiming provider-level source capture; GhostD deliberately omits Antigravity's permission-gating `PreToolUse` hook.
-6. **Phase 7.6 — JetBrains, Zed, and unsupported desktop agents:** run public-contract discovery. Create a host implementation only when its API can satisfy GhostD's safety and session-identity requirements.
+6. **Phase 7.6 — JetBrains, Zed, and unsupported desktop agents:** complete. `ghost hosts` reports the discovery result and the safe handoff-only workflow. Build a host client only after a future public contract meets GhostD's safety and session-identity requirements.
 
-Phase 8 packages only the integrations that have passed their associated verification gate.
+Phase 8 packages only the integrations that have passed their associated verification gate. The Phase 7.6 safe handoff path is distributable, but it is not source capture.
 
 ## Shared local bridge
 

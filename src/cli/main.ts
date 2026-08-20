@@ -22,6 +22,8 @@ import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
 import { IntegrationConfigStore, integrationProviders, providerModes } from '../ecosystem/config.js';
 import type { IntegrationProvider, ProviderMode } from '../ecosystem/config.js';
+import { desktopHostContract, desktopHostContracts, desktopHostIds } from '../ecosystem/host-contracts.js';
+import type { DesktopHostId } from '../ecosystem/host-contracts.js';
 import { LocalBridgeClientRegistry, LocalBridgeConfigurationStore, LocalBridgeServer, writeLocalBridgeClientCredentials } from '../ecosystem/bridge.js';
 import type { BridgeCapability } from '../ecosystem/bridge.js';
 import { installVsCodeTasks } from '../ecosystem/vscode.js';
@@ -91,6 +93,8 @@ function usage(): string {
                             Register one workspace-bound editor client without printing its credential.
   ghost bridge revoke <client-id> --approve
                             Revoke one editor-client credential.
+  ghost hosts [jetbrains|zed|other-desktop]
+                            Show verified desktop-host capture and safe handoff status.
   ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
   ghost setup                Initialize local storage and show supported host-capture status.
   ghost setup <host> --approve
@@ -119,6 +123,7 @@ function isAntigravityHookEvent(value: string): value is typeof antigravityHookE
 
 function isIntegrationProvider(value: string): value is IntegrationProvider { return integrationProviders.includes(value as IntegrationProvider); }
 function isProviderMode(value: string): value is ProviderMode { return providerModes.includes(value as ProviderMode); }
+function isDesktopHostId(value: string): value is DesktopHostId { return desktopHostIds.includes(value as DesktopHostId); }
 
 async function providers(arguments_: string[]): Promise<void> {
   const manager = new ProviderCliManager();
@@ -156,6 +161,19 @@ async function configure(arguments_: string[]): Promise<void> {
   }
   await new IntegrationConfigStore().setProvider(provider, mode);
   output.write(`Configured ${provider} for ${mode} mode. GhostD did not store any credential.\n`);
+}
+
+async function hosts(arguments_: string[]): Promise<void> {
+  const host = arguments_.at(0);
+  if (arguments_.length > 1 || (host !== undefined && !isDesktopHostId(host))) {
+    throw new Error('Usage: ghost hosts [jetbrains|zed|other-desktop].');
+  }
+  const contracts = host === undefined ? desktopHostContracts : [desktopHostContract(host)];
+  for (const contract of contracts) {
+    output.write(`${contract.displayName}: source capture ${contract.sourceCapture}; active-session awareness ${contract.activeSessionAwareness}.\n`);
+    output.write(`Reason: ${contract.reason}\n`);
+    output.write(`Safe handoffs: ${contract.safeHandoffs.join('; ')}.\n`);
+  }
 }
 
 async function acp(arguments_: string[]): Promise<void> {
@@ -815,6 +833,9 @@ async function main(): Promise<void> {
       return;
     case 'configure':
       await configure(arguments_);
+      return;
+    case 'hosts':
+      await hosts(arguments_);
       return;
     case 'acp':
       await acp(arguments_);

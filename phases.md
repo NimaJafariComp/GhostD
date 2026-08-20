@@ -189,13 +189,14 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.6 — JetBrains, Zed, and unsupported desktop agents
 
-**Status:** Planned discovery gate
+**Status:** Complete — discovery gate closed; safe handoff-only support is explicit
 
-- [ ] Evaluate each host's stable public extension or ACP contract, lifecycle event coverage, session identity, workspace scope, configuration ownership, and removal semantics.
-- [ ] Build a separate editor client only when the contract supports the Phase 7.1 bridge and an unambiguous, user-consented session model.
-- [ ] For hosts without a verified contract, provide only explicit `ghost context` and read-only MCP handoffs; do not advertise source capture or active-session awareness.
+- [x] Evaluate JetBrains and Zed against the required lifecycle, session identity, workspace scope, configuration ownership, and removal criteria. Both expose useful public ACP/editor extension surfaces, but neither documents a third-party observer for an existing private AI conversation.
+- [x] Decline to build speculative editor clients. JetBrains ACP and Zed Agent Server extensions create new agent sessions; they do not authorize GhostD to enumerate or attach to a running host-owned chat. GhostD's existing local bridge remains available for a future client only after a user-consented, version-pinned host contract exists.
+- [x] Make the result visible through `ghost hosts [jetbrains|zed|other-desktop]`. Every listed host reports source capture and active-session awareness as unsupported, explains why, and offers only `ghost context`, read-only `ghost mcp`, and `ghost acp handoff` as safe workflows.
+- [x] Publish the evidence, host-version constraints, and future implementation gate in [docs/host-contract-discovery.md](docs/host-contract-discovery.md). The document prohibits transcript export/import, UI scraping, terminal-title/process inspection, foreground-focus inference, credential access, and automatic configuration writes.
 
-**Exit criterion:** Each evaluated host has either a verified implementation phase with a version range and test plan, or an explicit unsupported status with a safe handoff workflow.
+**Exit criterion:** Met. JetBrains, Zed, and other desktop agents have an explicit unsupported status and safe handoff workflow. A new implementation phase is required before any host can be marketed as captured or active-session-aware.
 
 **Integration matrix:** [docs/host-integrations.md](docs/host-integrations.md) records the delivery ownership, capture authority, and verification matrix for every host above.
 
