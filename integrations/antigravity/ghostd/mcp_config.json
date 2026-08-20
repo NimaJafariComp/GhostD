@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ghostd": {
+      "command": "ghost",
+      "args": ["mcp"]
+    }
+  }
+}

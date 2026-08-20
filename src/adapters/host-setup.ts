@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { AntigravityPluginManager } from './antigravity/plugin.js';
 import { codexHooksInstalled, installCodexHooks, removeCodexHooks } from './codex/setup.js';
 
-export const capturableHosts = ['codex', 'claude', 'gemini'] as const;
-export const unsupportedCaptureHosts = ['antigravity'] as const;
+export const capturableHosts = ['codex', 'claude', 'gemini', 'antigravity'] as const;
+export const unsupportedCaptureHosts: readonly [] = [];
 
 export type CapturableHost = (typeof capturableHosts)[number];
 export type UnsupportedCaptureHost = (typeof unsupportedCaptureHosts)[number];
@@ -58,7 +59,7 @@ function isHookConfiguration(value: unknown): value is HookConfiguration {
   return isRecord(value['hooks']) && Object.values(value['hooks']).every((groups) => Array.isArray(groups) && groups.every(isHookGroup));
 }
 
-function hostConfiguration(host: Exclude<CapturableHost, 'codex'>, workspace: string): { path: string; events: readonly string[] } {
+function hostConfiguration(host: 'claude' | 'gemini', workspace: string): { path: string; events: readonly string[] } {
   if (host === 'claude') {
     return { path: join(workspace, '.claude', 'settings.local.json'), events: claudeCaptureEvents };
   }
@@ -127,11 +128,13 @@ async function removeJsonHooks(path: string, events: readonly string[], command:
 
 export async function hostCaptureStatus(host: CaptureHost, workspace: string, commands: Record<CapturableHost, string>): Promise<HostCaptureStatus> {
   if (host === 'antigravity') {
+    const status = await new AntigravityPluginManager().status();
     return {
       host,
-      captureSupported: false,
-      configured: false,
-      reason: 'No verified Antigravity source-capture contract is available.',
+      captureSupported: true,
+      configured: status.installed,
+      configPath: status.pluginPath,
+      ...(status.available ? {} : { reason: 'Google Antigravity CLI (agy) is not detected.' }),
     };
   }
   if (host === 'codex') {
@@ -154,6 +157,11 @@ export async function hostCaptureStatus(host: CaptureHost, workspace: string, co
 
 /** Installs only the documented, project-scoped source hooks for an explicitly selected host. */
 export async function installHostCapture(host: CapturableHost, workspace: string, commands: Record<CapturableHost, string>): Promise<string> {
+  if (host === 'antigravity') {
+    const manager = new AntigravityPluginManager();
+    await manager.install();
+    return manager.status().then(({ pluginPath }) => pluginPath);
+  }
   if (host === 'codex') return installCodexHooks(workspace, commands.codex);
   const { path, events } = hostConfiguration(host, workspace);
   await installJsonHooks(path, events, commands[host]);
@@ -162,6 +170,13 @@ export async function installHostCapture(host: CapturableHost, workspace: string
 
 /** Removes only Ghost's exact command and never changes unrelated hooks or provider trust configuration. */
 export async function removeHostCapture(host: CapturableHost, workspace: string, commands: Record<CapturableHost, string>): Promise<boolean> {
+  if (host === 'antigravity') {
+    const manager = new AntigravityPluginManager();
+    const status = await manager.status();
+    if (!status.installed) return false;
+    await manager.uninstall();
+    return true;
+  }
   if (host === 'codex') return removeCodexHooks(workspace, commands.codex);
   const { path, events } = hostConfiguration(host, workspace);
   return removeJsonHooks(path, events, commands[host]);

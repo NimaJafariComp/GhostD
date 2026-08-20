@@ -1,0 +1,21 @@
+{
+  "ghostd-capture": {
+    "PreInvocation": [
+      { "type": "command", "command": "ghost antigravity-hook PreInvocation", "timeout": 10 }
+    ],
+    "PostInvocation": [
+      { "type": "command", "command": "ghost antigravity-hook PostInvocation", "timeout": 10 }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "ghost antigravity-hook PostToolUse", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      { "type": "command", "command": "ghost antigravity-hook Stop", "timeout": 10 }
+    ]
+  }
+}

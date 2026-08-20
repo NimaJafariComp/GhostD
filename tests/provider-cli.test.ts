@@ -32,13 +32,13 @@ describe('ProviderCliManager', () => {
       expect.objectContaining({ provider: 'codex', installed: true, version: 'codex 1.2.3' }),
       expect.objectContaining({ provider: 'claude', installed: false, packageName: '@anthropic-ai/claude-code' }),
       expect.objectContaining({ provider: 'gemini', installed: true }),
-      expect.objectContaining({ provider: 'antigravity', installed: false, executable: 'antigravity' }),
+      expect.objectContaining({ provider: 'antigravity', installed: false, executable: 'agy' }),
     ]);
     expect(runner.calls).toEqual([
       { command: 'codex', arguments_: ['--version'] },
       { command: 'claude', arguments_: ['--version'] },
       { command: 'gemini', arguments_: ['--version'] },
-      { command: 'antigravity', arguments_: ['--version'] },
+      { command: 'agy', arguments_: ['--version'] },
     ]);
   });
 

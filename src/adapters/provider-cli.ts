@@ -28,7 +28,7 @@ const providerCliDefinitions: Record<ProviderCliName, ProviderCliDefinition> = {
   },
   antigravity: {
     displayName: 'Google Antigravity CLI',
-    executable: 'antigravity',
+    executable: 'agy',
   },
 };
 

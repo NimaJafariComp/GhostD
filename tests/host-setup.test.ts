@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { hostCaptureStatus, installHostCapture, removeHostCapture } from '../src/adapters/host-setup.js';
+import { capturableHosts, hostCaptureStatus, installHostCapture, removeHostCapture } from '../src/adapters/host-setup.js';
 import type { CapturableHost } from '../src/adapters/host-setup.js';
 
 const temporaryDirectories: string[] = [];
@@ -12,6 +12,7 @@ const commands: Record<CapturableHost, string> = {
   codex: 'ghost codex-hook',
   claude: 'ghost claude-hook',
   gemini: 'ghost gemini-hook',
+  antigravity: 'ghost antigravity-hook',
 };
 
 afterEach(async () => {
@@ -69,15 +70,7 @@ describe('universal host setup', () => {
     expect(installed.hooks.PreCompress?.[0]?.hooks.map(({ command }) => command)).toEqual(['ghost gemini-hook']);
   });
 
-  it('reports unsupported hosts as unavailable without creating configuration', async () => {
-    const workspace = await mkdtemp(join(tmpdir(), 'ghostd-unsupported-setup-'));
-    temporaryDirectories.push(workspace);
-
-    await expect(hostCaptureStatus('antigravity', workspace, commands)).resolves.toEqual({
-      host: 'antigravity',
-      captureSupported: false,
-      configured: false,
-      reason: 'No verified Antigravity source-capture contract is available.',
-    });
+  it('includes Antigravity in the supported native-capture host set', () => {
+    expect(capturableHosts).toContain('antigravity');
   });
 });

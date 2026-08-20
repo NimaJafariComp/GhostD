@@ -1,5 +1,7 @@
 export { acpHandoff } from './acp/handoff.js';
 export { CodexAdapter } from './adapters/codex/adapter.js';
+export { AntigravitySourceAdapter } from './adapters/antigravity/source.js';
+export { AntigravityPluginManager, bundledAntigravityPluginPath } from './adapters/antigravity/plugin.js';
 export { ClaudeSourceAdapter } from './adapters/claude/source.js';
 export { ClaudeTargetAdapter } from './adapters/claude/target.js';
 export { GeminiSourceAdapter } from './adapters/gemini/source.js';

@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 
 import { CodexAdapter } from '../adapters/codex/adapter.js';
+import { AntigravityPluginManager } from '../adapters/antigravity/plugin.js';
+import { AntigravitySourceAdapter, antigravityHookEvents } from '../adapters/antigravity/source.js';
 import { hookCommand } from '../adapters/codex/setup.js';
 import { ClaudeSourceAdapter } from '../adapters/claude/source.js';
 import { GeminiSourceAdapter } from '../adapters/gemini/source.js';
@@ -92,7 +94,7 @@ function usage(): string {
   ghost vscode setup         Add opt-in GhostD context and MCP tasks to this VS Code workspace.
   ghost setup                Initialize local storage and show supported host-capture status.
   ghost setup <host> --approve
-                            Install documented project hooks for codex, claude, or gemini.
+                            Install documented capture for codex, claude, gemini, or antigravity.
   ghost setup remove <host> --approve
                             Remove only GhostD's exact project hook command.
   ghost session list         List captured sessions in the current workspace.
@@ -100,7 +102,11 @@ function usage(): string {
   ghost session use <id>     Explicitly select a captured session for this workspace.
   ghost codex-hook           Receive a Codex hook event on standard input.
   ghost claude-hook          Receive a Claude hook event on standard input.
-  ghost gemini-hook          Receive a Gemini hook event on standard input.`;
+  ghost gemini-hook          Receive a Gemini hook event on standard input.
+  ghost antigravity <status|enable|disable|uninstall> [--approve]
+                            Manage the native Antigravity plugin explicitly.
+  ghost antigravity-hook <PreInvocation|PostInvocation|PostToolUse|Stop>
+                            Receive a documented Antigravity hook event on standard input.`;
 }
 
 function isProviderCliName(value: string): value is ProviderCliName {
@@ -109,6 +115,7 @@ function isProviderCliName(value: string): value is ProviderCliName {
 
 function isCapturableHost(value: string): value is CapturableHost { return capturableHosts.includes(value as CapturableHost); }
 function isCaptureHost(value: string): value is CaptureHost { return [...capturableHosts, ...unsupportedCaptureHosts].includes(value as CaptureHost); }
+function isAntigravityHookEvent(value: string): value is typeof antigravityHookEvents[number] { return antigravityHookEvents.includes(value as typeof antigravityHookEvents[number]); }
 
 function isIntegrationProvider(value: string): value is IntegrationProvider { return integrationProviders.includes(value as IntegrationProvider); }
 function isProviderMode(value: string): value is ProviderMode { return providerModes.includes(value as ProviderMode); }
@@ -607,16 +614,69 @@ async function geminiHook(): Promise<void> {
   output.write('{}\n');
 }
 
+async function antigravityHook(arguments_: string[]): Promise<void> {
+  const hookEvent = arguments_.at(0);
+  if (hookEvent === undefined || arguments_.length !== 1 || !isAntigravityHookEvent(hookEvent)) {
+    throw new Error('Usage: ghost antigravity-hook <PreInvocation|PostInvocation|PostToolUse|Stop>.');
+  }
+  const contents = await readIngestInput(undefined);
+  let rawEvent: unknown;
+  try {
+    rawEvent = JSON.parse(contents) as unknown;
+  } catch {
+    throw new Error('Antigravity hook input is not valid JSON.');
+  }
+  if (typeof rawEvent !== 'object' || rawEvent === null || Array.isArray(rawEvent)) {
+    throw new Error('Antigravity hook input must be a JSON object.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    for (const event of new AntigravitySourceAdapter().normalize({ ...rawEvent as Record<string, unknown>, hookEventName: hookEvent })) {
+      database.append(event);
+    }
+  } finally {
+    database.close();
+  }
+  output.write('{}\n');
+}
+
+async function antigravity(arguments_: string[]): Promise<void> {
+  const action = arguments_.at(0) ?? 'status';
+  const manager = new AntigravityPluginManager();
+  if (action === 'status' && arguments_.length <= 1) {
+    const status = await manager.status();
+    if (!status.available) {
+      output.write('Google Antigravity CLI (agy) is not detected. Install it using its official installer before enabling GhostD capture.\n');
+      return;
+    }
+    output.write(status.installed
+      ? `GhostD Antigravity plugin is listed by agy. Plugin source: ${status.pluginPath}\n`
+      : `GhostD Antigravity plugin is not listed. Run ghost setup antigravity --approve to install it from ${status.pluginPath}.\n`);
+    return;
+  }
+  if (!['enable', 'disable', 'uninstall'].includes(action) || arguments_.at(1) !== '--approve' || arguments_.length !== 2) {
+    throw new Error('Usage: ghost antigravity <status|enable|disable|uninstall> [--approve].');
+  }
+  switch (action) {
+    case 'enable': await manager.enable(); break;
+    case 'disable': await manager.disable(); break;
+    case 'uninstall': await manager.uninstall(); break;
+    default: throw new Error('Usage: ghost antigravity <status|enable|disable|uninstall> [--approve].');
+  }
+  output.write(`${action === 'uninstall' ? 'Uninstalled' : `${action === 'enable' ? 'Enabled' : 'Disabled'}`} GhostD Antigravity plugin. GhostD history remains local.\n`);
+}
+
 function hostCommands(): Record<CapturableHost, string> {
   const entryPath = process.argv[1];
   if (entryPath === undefined) {
     throw new Error('Unable to determine the Ghost CLI entry path.');
   }
-  const command = (hook: 'codex-hook' | 'claude-hook' | 'gemini-hook'): string => `${quoteForShell(process.execPath)} ${quoteForShell(resolve(entryPath))} ${hook}`;
+  const command = (hook: 'codex-hook' | 'claude-hook' | 'gemini-hook' | 'antigravity-hook'): string => `${quoteForShell(process.execPath)} ${quoteForShell(resolve(entryPath))} ${hook}`;
   return {
     codex: hookCommand(process.execPath, resolve(entryPath)),
     claude: command('claude-hook'),
     gemini: command('gemini-hook'),
+    antigravity: command('antigravity-hook'),
   };
 }
 
@@ -672,7 +732,7 @@ async function setup(arguments_: string[]): Promise<void> {
   const commands = hostCommands();
   const [action, approval] = arguments_;
   if (action === undefined || action === 'status') {
-    if (arguments_.length > (action === 'status' ? 1 : 0)) throw new Error('Usage: ghost setup [status|<codex|claude|gemini> --approve|remove <host> --approve].');
+    if (arguments_.length > (action === 'status' ? 1 : 0)) throw new Error('Usage: ghost setup [status|<codex|claude|gemini|antigravity> --approve|remove <host> --approve].');
     const manager = new ProviderCliManager();
     const statuses = await manager.statuses();
     output.write(`Ghost storage ready: ${databasePath()}\n`);
@@ -684,7 +744,7 @@ async function setup(arguments_: string[]): Promise<void> {
         : `capture unavailable: ${status.reason}`;
       output.write(`${provider}: ${installed ? 'CLI detected' : 'CLI not detected'}; ${configuration}\n`);
     }
-    output.write('To modify one supported project integration, run: ghost setup <codex|claude|gemini> --approve. Codex project trust remains user-controlled.\n');
+    output.write('To modify one supported integration, run: ghost setup <codex|claude|gemini|antigravity> --approve. Codex project trust remains user-controlled.\n');
     return;
   }
 
@@ -692,15 +752,16 @@ async function setup(arguments_: string[]): Promise<void> {
     const host = arguments_.at(1);
     const confirmation = arguments_.at(2);
     if (host === undefined || confirmation !== '--approve' || arguments_.length !== 3 || !isCapturableHost(host)) {
-      throw new Error('Usage: ghost setup remove <codex|claude|gemini> --approve.');
+      throw new Error('Usage: ghost setup remove <codex|claude|gemini|antigravity> --approve.');
     }
     const removed = await removeHostCapture(host, process.cwd(), commands);
-    output.write(removed ? `Removed GhostD ${host} capture hook from this project.\n` : `No GhostD ${host} capture hook is configured in this project.\n`);
+    const noun = host === 'antigravity' ? 'capture plugin' : 'capture hook from this project';
+    output.write(removed ? `Removed GhostD ${host} ${noun}.\n` : `No GhostD ${host} ${noun} is configured.\n`);
     return;
   }
 
   if (arguments_.length !== 2 || approval !== '--approve' || !isCaptureHost(action)) {
-    throw new Error('Usage: ghost setup [status|<codex|claude|gemini> --approve|remove <host> --approve].');
+    throw new Error('Usage: ghost setup [status|<codex|claude|gemini|antigravity> --approve|remove <host> --approve].');
   }
   if (!isCapturableHost(action)) {
     throw new Error(`GhostD cannot configure ${action}: no verified source-capture contract is available.`);
@@ -710,7 +771,7 @@ async function setup(arguments_: string[]): Promise<void> {
     throw new Error(`${availability.displayName} is not detected. GhostD will not write a hook configuration for an unavailable host.`);
   }
   const hookPath = await installHostCapture(action, process.cwd(), commands);
-  output.write(`GhostD ${action} capture hook installed: ${hookPath}\n`);
+  output.write(`GhostD ${action} capture ${action === 'antigravity' ? 'plugin' : 'hook'} installed: ${hookPath}\n`);
   output.write(action === 'codex'
     ? 'Approve this project in Codex before its hooks can run.\n'
     : `GhostD captures only documented ${availability.displayName} hook events. Use ghost session list and ghost session use <id> to control the active session.\n`);
@@ -782,6 +843,12 @@ async function main(): Promise<void> {
       return;
     case 'gemini-hook':
       await geminiHook();
+      return;
+    case 'antigravity':
+      await antigravity(arguments_);
+      return;
+    case 'antigravity-hook':
+      await antigravityHook(arguments_);
       return;
     case '--help':
     case '-h':

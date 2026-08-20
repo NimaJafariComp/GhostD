@@ -176,14 +176,16 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 ## Phase 7.5 — Antigravity CLI plugin
 
-**Status:** Planned
+**Status:** Implementation complete — native plugin lifecycle verified; authenticated agent-turn validation remains a host-account gate
 
-- [ ] Build the GhostD Antigravity plugin using the documented manifest, hooks, and MCP configuration contract.
-- [ ] Implement explicit install, status, disable, uninstall, and recovery behavior without overwriting unrelated Antigravity configuration.
-- [ ] Normalize documented Antigravity events into canonical GhostEvents with provenance, redaction, host session identity, and workspace scope.
-- [ ] Run live integration tests for install/remove, lifecycle capture, concurrent sessions, restart recovery, large output, secret redaction, and provider outage.
+- [x] Build the versioned native `ghostd` Antigravity plugin with the documented `plugin.json`, `hooks.json`, and `mcp_config.json` layout. Its MCP entry starts GhostD's existing read-only local server only.
+- [x] Implement explicit setup, status, disable, enable, and uninstall paths. `ghost setup antigravity --approve` invokes only `agy plugin install`; `ghost setup remove antigravity --approve` invokes only the matching native uninstall. Neither path edits unrelated Antigravity configuration.
+- [x] Normalize documented `PreInvocation`, `PostInvocation`, `PostToolUse`, and `Stop` payloads into canonical events with provider-supplied `conversationId`, each declared absolute workspace, provenance, and storage redaction. A multi-workspace payload becomes separate workspace-scoped sessions instead of a guessed active workspace.
+- [x] Preserve Antigravity's permission boundary: GhostD deliberately does not register `PreToolUse`, because that hook requires a permission decision and could otherwise allow, deny, or prompt for agent actions. Every registered GhostD hook returns `{}` and cannot inject trajectory steps, change a tool decision, or prevent a stop.
+- [x] Validate the plugin with Antigravity CLI 1.1.16: real local plugin install/list, MCP and hook component discovery, GhostD-managed disable/enable/uninstall, direct documented hook ingestion, strict JSON output, tool failure capture, and ended-session recovery. The automated suite covers malformed identity/workspace data, multi-workspace isolation, background-task stop semantics, plugin command failures, and the no-gating-hook invariant.
+- [ ] Run the plugin during a local authenticated Antigravity agent session, including simultaneous conversations, restart, large output, secret-shaped values, and actual provider outage. This machine has the CLI but no authenticated Antigravity agent session; GhostD will not claim that provider-level run occurred.
 
-**Exit criterion:** Antigravity becomes `supported and verified` only after a version-pinned, live plugin test captures canonical events and cleanly removes itself.
+**Exit criterion:** Pending only the authenticated agent-session suite. The plugin lifecycle and documented-input path are verified; full host source-capture support is not claimed until a real Antigravity conversation supplies those hook events.
 
 ## Phase 7.6 — JetBrains, Zed, and unsupported desktop agents
 
