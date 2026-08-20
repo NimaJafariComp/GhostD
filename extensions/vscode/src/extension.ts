@@ -29,6 +29,7 @@ interface DetectedAgentHost {
   version: string;
   capture: 'supported' | 'unavailable';
   detail: string;
+  captureHost?: 'codex' | 'claude';
 }
 
 const knownAgentExtensions: ReadonlyArray<Omit<DetectedAgentHost, 'version'>> = [
@@ -43,12 +44,14 @@ const knownAgentExtensions: ReadonlyArray<Omit<DetectedAgentHost, 'version'>> = 
     extensionId: 'openai.chatgpt',
     capture: 'supported',
     detail: 'Detected. Configure the documented Codex project hook to capture sessions.',
+    captureHost: 'codex',
   },
   {
     name: 'Claude Code',
     extensionId: 'anthropic.claude-code',
     capture: 'supported',
     detail: 'Detected. Configure the documented Claude Code project hook to capture sessions.',
+    captureHost: 'claude',
   },
 ];
 
@@ -199,13 +202,20 @@ class GhostdController implements vscode.Disposable {
         this.setStatus('$(warning) GhostD: Select session', 'More than one session is active, or no session is selected. Click to choose one.', 'ghostd.selectSession');
       } else {
         const codex = capabilities.find((capability) => capability === 'codex: installed but not configured');
+        const configuredHost = capabilities.find((capability) => capability.endsWith(': configured but inactive'));
         const unavailableHost = this.detectedAgentHosts().find(({ capture }) => capture === 'unavailable');
         this.setStatus(
-          unavailableHost === undefined ? '$(circle-outline) GhostD: No capture' : `$(info) GhostD: ${unavailableHost.name} detected`,
-          unavailableHost === undefined
-            ? codex === undefined ? 'No captured sessions in this workspace.' : 'Codex is installed but GhostD capture is not configured.'
-            : unavailableHost.detail,
-          unavailableHost === undefined ? codex === undefined ? 'ghostd.refresh' : 'ghostd.configureCodex' : 'ghostd.showDetectedHosts',
+          configuredHost === undefined
+            ? unavailableHost === undefined ? '$(circle-outline) GhostD: No capture' : `$(info) GhostD: ${unavailableHost.name} detected`
+            : `$(check) GhostD: ${configuredHost.split(':', 1)[0] ?? 'host'} ready`,
+          configuredHost === undefined
+            ? unavailableHost === undefined
+              ? codex === undefined ? 'No captured sessions in this workspace.' : 'Codex is installed but GhostD capture is not configured.'
+              : unavailableHost.detail
+            : 'A documented capture hook is configured. Start or resume a session in this host to begin capture.',
+          configuredHost === undefined
+            ? unavailableHost === undefined ? codex === undefined ? 'ghostd.refresh' : 'ghostd.configureCodex' : 'ghostd.showDetectedHosts'
+            : 'ghostd.showDetectedHosts',
         );
       }
     } catch (error: unknown) {
@@ -260,11 +270,17 @@ class GhostdController implements vscode.Disposable {
       vscode.window.showInformationMessage('GhostD did not detect a known IDE agent extension in this VS Code host.');
       return;
     }
-    await vscode.window.showQuickPick(detected.map((host) => ({
+    const workspace = await this.workspace();
+    const capabilities = workspace === undefined ? [] : await this.captureCapabilities(workspace);
+    await vscode.window.showQuickPick(detected.map((host) => {
+      const state = host.captureHost === undefined ? undefined : capabilities.find((capability) => capability.startsWith(`${host.captureHost}: `));
+      return {
       label: host.name,
-      description: `${host.extensionId} v${host.version} · capture ${host.capture}`,
-      detail: host.detail,
-    })), { placeHolder: 'Detected IDE agent hosts. Detection never reads chat data.' });
+      description: `${host.extensionId} v${host.version} · ${state ?? `capture ${host.capture}`}`,
+      detail: state === undefined ? host.detail : `${host.detail} Current GhostD capture state: ${state}.`,
+      host,
+    };
+    }), { placeHolder: 'Detected IDE agent hosts. Detection never reads chat data.' });
   }
 
   public async disconnect(): Promise<void> {
@@ -389,6 +405,16 @@ class GhostdController implements vscode.Disposable {
       const version = typeof extension.packageJSON['version'] === 'string' ? extension.packageJSON['version'] : 'unknown';
       return [{ ...known, version }];
     });
+  }
+
+  private async captureCapabilities(workspace: vscode.WorkspaceFolder): Promise<string[]> {
+    try {
+      const credentials = await this.credentials(workspace);
+      if (credentials === undefined) return [];
+      return readCapabilities((await requestBridge(credentials, 'capture/status'))['capabilities']);
+    } catch {
+      return [];
+    }
   }
 
   /**
