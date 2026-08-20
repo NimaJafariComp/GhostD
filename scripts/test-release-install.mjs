@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { npmCommand } from './npm-command.mjs';
+import { execNpm } from './npm-command.mjs';
 
 const [artifact] = process.argv.slice(2);
 if (artifact === undefined || process.argv.length !== 3) {
@@ -13,7 +13,7 @@ const artifactPath = resolve(artifact);
 await stat(artifactPath);
 const prefix = await mkdtemp(join(tmpdir(), 'ghostd-release-install-'));
 try {
-  execFileSync(npmCommand, ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', prefix, artifactPath], { stdio: 'inherit' });
+  execNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', prefix, artifactPath], { stdio: 'inherit' });
   const cli = join(prefix, 'node_modules', 'ghostd', 'dist', 'cli', 'main.js');
   const environment = {
     ...process.env,

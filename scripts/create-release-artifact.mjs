@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { npmCommand } from './npm-command.mjs';
+import { execNpm } from './npm-command.mjs';
 
 const [outputDirectory] = process.argv.slice(2);
 if (outputDirectory === undefined || process.argv.length !== 3) {
@@ -11,8 +11,8 @@ if (outputDirectory === undefined || process.argv.length !== 3) {
 }
 const destination = resolve(outputDirectory);
 await mkdir(destination, { recursive: true });
-execFileSync(npmCommand, ['run', 'verify:package'], { stdio: 'inherit' });
-const output = execFileSync(npmCommand, ['pack', '--json', '--ignore-scripts', '--pack-destination', destination], { encoding: 'utf8' });
+execNpm(['run', 'verify:package'], { stdio: 'inherit' });
+const output = execNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', destination], { encoding: 'utf8' });
 const packages = JSON.parse(output);
 const artifact = Array.isArray(packages) && packages.length === 1 && typeof packages[0] === 'object' && packages[0] !== null
   ? packages[0].filename
