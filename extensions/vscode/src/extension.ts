@@ -555,6 +555,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidChangeActiveTextEditor(() => { void controller.refresh(); }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => { void controller.refresh(); }),
   );
+  void revealSidebarAfterUpdate(context);
   void controller.refresh();
 }
 
@@ -626,4 +627,15 @@ function escapeHtml(value: string): string {
 function showCommandError(error: unknown): void {
   const message = error instanceof Error ? error.message : 'Unexpected GhostD extension error.';
   void vscode.window.showErrorMessage(message);
+}
+
+async function revealSidebarAfterUpdate(context: vscode.ExtensionContext): Promise<void> {
+  const release = '0.1.8';
+  if (context.globalState.get<string>('ghostd.sidebarRevealedFor') === release) return;
+  try {
+    await vscode.commands.executeCommand('workbench.view.extension.ghostd');
+    await context.globalState.update('ghostd.sidebarRevealedFor', release);
+  } catch {
+    // The view remains available from View: Open View and the GhostD command palette actions.
+  }
 }
