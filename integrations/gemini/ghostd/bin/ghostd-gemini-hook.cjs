@@ -4,8 +4,12 @@
 const { spawn } = require('node:child_process');
 
 const command = process.platform === 'win32' ? 'ghost.cmd' : 'ghost';
-const child = spawn(command, ['gemini-hook'], {
-  shell: process.platform === 'win32',
+const arguments_ = ['gemini-hook'];
+const child = process.platform === 'win32'
+  ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command, ...arguments_], {
+    stdio: ['pipe', 'ignore', 'pipe'],
+  })
+  : spawn(command, arguments_, {
   stdio: ['pipe', 'ignore', 'pipe'],
 });
 
