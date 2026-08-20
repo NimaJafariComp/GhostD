@@ -2,6 +2,10 @@
 
 > **Portable, revision-pinned context for developer-agent workflows.**
 
+<p align="center">
+  <img src="assets/ghostd-logo.png" width="192" alt="GhostD logo: a glowing ghost context node with two branches" />
+</p>
+
 [![Release verification](https://github.com/NimaJafariComp/GhostD/actions/workflows/release-verify.yml/badge.svg)](https://github.com/NimaJafariComp/GhostD/actions/workflows/release-verify.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.5.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
