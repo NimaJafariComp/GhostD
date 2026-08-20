@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -289,7 +290,9 @@ export class GhostDatabase {
   public static async open(path: string): Promise<GhostDatabase> {
     const directory = dirname(path);
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    // POSIX modes are not meaningful on Windows; storage protection there is
+    // governed by the containing directory's Windows ACL.
+    if (platform() !== 'win32') await chmod(directory, 0o700);
     return new GhostDatabase(path);
   }
 

@@ -1,5 +1,5 @@
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -26,9 +26,10 @@ describe('GhostD doctor', () => {
     await writeFile(databasePath, 'fixture', { mode: 0o600 });
     await chmod(directory, 0o700);
 
-    await expect(inspectDoctorStorage(databasePath)).resolves.toMatchObject({ database: 'private', directory: 'private' });
+    const expectedState = platform() === 'win32' ? 'access-control-not-inspected' : 'private';
+    await expect(inspectDoctorStorage(databasePath)).resolves.toMatchObject({ database: expectedState, directory: expectedState });
     await chmod(databasePath, 0o644);
-    await expect(inspectDoctorStorage(databasePath)).resolves.toMatchObject({ database: 'accessible-by-group-or-others' });
+    await expect(inspectDoctorStorage(databasePath)).resolves.toMatchObject({ database: platform() === 'win32' ? expectedState : 'accessible-by-group-or-others' });
   });
 
   it('renders actionable read-only recovery diagnostics without credentials', () => {

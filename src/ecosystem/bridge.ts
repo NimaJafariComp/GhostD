@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -83,7 +83,7 @@ function defaultBridgeDirectory(): string {
 
 function defaultEndpoint(directory: string): string {
   if (platform() === 'win32') {
-    const suffix = Buffer.from(resolve(directory)).toString('hex').slice(0, 40);
+    const suffix = createHash('sha256').update(resolve(directory)).digest('hex').slice(0, 32);
     return `\\\\.\\pipe\\ghostd-${suffix}`;
   }
   return join(directory, 'bridge.sock');
@@ -431,7 +431,8 @@ async function writePrivateJson(path: string, value: unknown): Promise<void> {
   const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, path);
-  await chmod(path, 0o600);
+  // Windows secures files through ACLs rather than POSIX mode bits.
+  if (platform() !== 'win32') await chmod(path, 0o600);
 }
 
 async function removeStaleEndpoint(endpoint: string): Promise<void> {

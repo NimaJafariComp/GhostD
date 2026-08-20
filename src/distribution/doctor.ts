@@ -1,11 +1,12 @@
 import { stat } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { dirname } from 'node:path';
 
 import type { HostCaptureStatus } from '../adapters/host-setup.js';
 import type { ProviderCliStatus } from '../adapters/provider-cli.js';
 import type { GhostConfiguration } from '../ecosystem/config.js';
 
-export type PrivatePathState = 'absent' | 'private' | 'accessible-by-group-or-others';
+export type PrivatePathState = 'absent' | 'private' | 'accessible-by-group-or-others' | 'access-control-not-inspected';
 
 export interface DoctorStorageStatus {
   database: PrivatePathState;
@@ -55,6 +56,9 @@ export function renderDoctorReport(report: DoctorReport): string {
 async function inspectPrivatePath(path: string): Promise<PrivatePathState> {
   try {
     const metadata = await stat(path);
+    // Node exposes POSIX mode bits on Windows, but they do not represent the
+    // file's ACL. Do not make a misleading privacy claim from those bits.
+    if (platform() === 'win32') return 'access-control-not-inspected';
     return (metadata.mode & 0o077) === 0 ? 'private' : 'accessible-by-group-or-others';
   } catch (error: unknown) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 'absent';
@@ -64,6 +68,9 @@ async function inspectPrivatePath(path: string): Promise<PrivatePathState> {
 
 function renderStorage(storage: DoctorStorageStatus): string {
   if (storage.database === 'absent') return `not initialized (${storage.databasePath}); run ghost setup when ready`;
+  if (storage.directory === 'access-control-not-inspected' || storage.database === 'access-control-not-inspected') {
+    return `exists; Windows ACL permissions were not inspected (${storage.databasePath})`;
+  }
   if (storage.directory === 'private' && storage.database === 'private') return `ready and owner-only (${storage.databasePath})`;
   return `exists but needs owner-only permissions (${storage.databasePath})`;
 }

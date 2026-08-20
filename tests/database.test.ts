@@ -1,5 +1,5 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -35,7 +35,7 @@ describe('GhostDatabase', () => {
     const database = await GhostDatabase.open(join(storageDirectory, 'ghost.db'));
 
     try {
-      expect((await stat(storageDirectory)).mode & 0o777).toBe(0o700);
+      if (platform() !== 'win32') expect((await stat(storageDirectory)).mode & 0o777).toBe(0o700);
     } finally {
       database.close();
     }

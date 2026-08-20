@@ -1,7 +1,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -38,6 +38,18 @@ function run(command: string, arguments_: string[], input: string, environment: 
   });
 }
 
+async function writeGhostFixture(binDirectory: string, source: string): Promise<void> {
+  const fixturePath = join(binDirectory, 'ghost.cjs');
+  await writeFile(fixturePath, source);
+  if (process.platform === 'win32') {
+    await writeFile(join(binDirectory, 'ghost.cmd'), `@echo off\r\n\"${process.execPath}\" \"%~dp0ghost.cjs\" %*\r\n`);
+    return;
+  }
+  const ghostPath = join(binDirectory, 'ghost');
+  await writeFile(ghostPath, `#!${process.execPath}\nrequire('./ghost.cjs');\n`);
+  await chmod(ghostPath, 0o755);
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
 });
@@ -67,15 +79,12 @@ describe('GhostD Gemini CLI extension', () => {
     const inputPath = join(directory, 'hook-input.json');
     const argumentsPath = join(directory, 'hook-arguments.txt');
     await mkdir(binDirectory, { recursive: true });
-    await writeFile(join(directory, 'ghost.cjs'), [
+    await writeGhostFixture(binDirectory, [
       "const { readFileSync, writeFileSync } = require('node:fs');",
       "writeFileSync(process.env.GHOSTD_TEST_INPUT_PATH, readFileSync(0));",
       "writeFileSync(process.env.GHOSTD_TEST_ARGUMENTS_PATH, process.argv.slice(2).join(' '));",
       "process.stdout.write('unexpected child stdout');",
     ].join('\n'));
-    const ghostPath = join(binDirectory, 'ghost');
-    await writeFile(ghostPath, `#!${process.execPath}\nrequire('../ghost.cjs');\n`);
-    await chmod(ghostPath, 0o755);
 
     const rawHook = JSON.stringify({
       hook_event_name: 'BeforeAgent',
@@ -86,7 +95,7 @@ describe('GhostD Gemini CLI extension', () => {
     });
     const result = await run(process.execPath, [launcherPath], rawHook, {
       ...process.env,
-      PATH: `${binDirectory}:${process.env['PATH'] ?? ''}`,
+      PATH: `${binDirectory}${delimiter}${process.env['PATH'] ?? ''}`,
       GHOSTD_TEST_INPUT_PATH: inputPath,
       GHOSTD_TEST_ARGUMENTS_PATH: argumentsPath,
     });
@@ -112,13 +121,11 @@ describe('GhostD Gemini CLI extension', () => {
     temporaryDirectories.push(directory);
     const binDirectory = join(directory, 'bin');
     await mkdir(binDirectory, { recursive: true });
-    const ghostPath = join(binDirectory, 'ghost');
-    await writeFile(ghostPath, `#!${process.execPath}\nprocess.stderr.write('invalid hook payload\\n'); process.exit(1);\n`);
-    await chmod(ghostPath, 0o755);
+    await writeGhostFixture(binDirectory, "process.stderr.write('invalid hook payload\\n'); process.exit(1);");
 
     const result = await run(process.execPath, [launcherPath], '{"hook_event_name":"SessionStart"}', {
       ...process.env,
-      PATH: `${binDirectory}:${process.env['PATH'] ?? ''}`,
+      PATH: `${binDirectory}${delimiter}${process.env['PATH'] ?? ''}`,
     });
 
     expect(result.code).toBe(0);

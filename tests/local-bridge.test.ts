@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -46,7 +46,7 @@ describe('Phase 7.1 local bridge', () => {
       database.close();
     }
 
-    const configuration = await new LocalBridgeConfigurationStore(join(directory, 'bridge.json'), join(directory, 'bridge.sock')).loadOrCreate('2026-08-20T12:00:00.000Z');
+    const configuration = await new LocalBridgeConfigurationStore(join(directory, 'bridge.json')).loadOrCreate('2026-08-20T12:00:00.000Z');
     const registry = new LocalBridgeClientRegistry(join(directory, 'bridge-clients.json'));
     const client = await registry.register('vscode', workspace, configuration.endpoint, '2026-08-20T12:00:00.000Z');
     const extensionCredentialPath = join(directory, 'vscode-storage', 'bridge.json');
@@ -59,8 +59,10 @@ describe('Phase 7.1 local bridge', () => {
     });
     await server.listen();
     try {
-      expect((await stat(join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
-      expect((await stat(join(directory, 'bridge-clients.json'))).mode & 0o777).toBe(0o600);
+      if (platform() !== 'win32') {
+        expect((await stat(join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
+        expect((await stat(join(directory, 'bridge-clients.json'))).mode & 0o777).toBe(0o600);
+      }
       expect(await requestLocalBridge(client, 'initialize')).toMatchObject({ protocol: 'ghostd/local-bridge/1' });
       expect(await requestVsCodeBridge(await readVsCodeBridgeCredentials(extensionCredentialPath), 'initialize')).toMatchObject({ protocol: 'ghostd/local-bridge/1' });
       expect(await requestLocalBridge(client, 'capture/status')).toMatchObject({
@@ -104,6 +106,6 @@ describe('Phase 7.1 local bridge', () => {
     const credentialPath = join(directory, 'vscode', 'bridge.json');
     await writeLocalBridgeClientCredentials(credentialPath, second);
     expect(await readLocalBridgeClientCredentials(credentialPath)).toEqual(second);
-    expect((await stat(credentialPath)).mode & 0o777).toBe(0o600);
+    if (platform() !== 'win32') expect((await stat(credentialPath)).mode & 0o777).toBe(0o600);
   });
 });
