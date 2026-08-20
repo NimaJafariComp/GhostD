@@ -102,3 +102,33 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Publish the adapter SDK and compatibility ladder. The public package entry point exports canonical events, source/target adapter contracts, Ghost database access, provider adapters, ACP handoffs, MCP server, and opt-in integration configuration.
 - [x] Add IDE/editor integrations only after CLI fidelity is proven. `ghost vscode setup` merges GhostD Context and MCP tasks into the current workspace’s `.vscode/tasks.json` without replacing existing tasks or extensions.
 - [x] Add Antigravity integration discovery. `ghost providers` detects the official `antigravity` executable and lets users record explicit `subscription` or `api` provider mode via `ghost configure`; credentials are never persisted by GhostD, and no unverified installer command is run.
+
+## Phase 7 — Distribution and universal installation
+
+**Status:** Planned
+
+- [ ] Define supported release channels, semantic-versioning policy, upgrade compatibility policy, and explicit platform support matrix.
+- [ ] Package the CLI for npm with a clean public package surface, executable entry point, provenance metadata, and install/update/uninstall documentation.
+- [ ] Produce immutable, versioned release artifacts with checksums and a repeatable release-verification process. Native binaries are optional only when they materially improve the supported installation experience.
+- [ ] Create and maintain a dedicated Homebrew tap and formula so macOS and Linux users can install a released version with `brew install <owner>/tap/ghostd`.
+- [ ] Evaluate eligibility for Homebrew Core only after GhostD is public, appropriately licensed, stable, and compatible with Homebrew's formula requirements; until then, do not imply `brew install ghostd` is supported.
+- [ ] Make all installers safe by default: no credential collection, no provider login bypass, no project-trust bypass, and no implicit hook installation into untrusted workspaces.
+- [ ] Provide a post-install `ghost doctor` flow that identifies missing optional agents, supported installation paths, permissions, project trust state, and recovery steps without modifying anything unless the user explicitly confirms.
+- [ ] Test fresh install, upgrade, downgrade/recovery where supported, uninstall, and offline/provider-unavailable behavior on every supported platform.
+
+**Exit criterion:** A new user can install a verified, released GhostD build through npm or the supported Homebrew tap, run `ghost doctor`, and complete explicit setup without manually cloning the repository or exposing credentials to GhostD.
+
+## Phase 8 — Human-centered interaction and product surfaces
+
+**Status:** Planned
+
+- [ ] Define the primary user journeys: first-run setup, capture confidence, context inspection, branch creation, agent comparison, review, promotion, recovery, and removal.
+- [ ] Design the CLI as a progressive-disclosure interface: safe defaults, actionable errors, concise status, discoverable help, and a clear distinction between read-only operations and writes.
+- [ ] Make trust, provenance, freshness, workspace scope, provider cost, and write/promotion authority visible at the moment a user makes a decision.
+- [ ] Create a human-readable context and branch inspection experience that lets users understand why GhostD believes a fact, whether it is current, and what source evidence supports it.
+- [ ] Deliver an accessible, keyboard-first interactive surface for the workflows that cannot be safely understood through terse CLI output alone. Select the smallest appropriate product form after user research: enhanced terminal UI, local web interface, native desktop application, or a real VS Code extension.
+- [ ] Treat the current `ghost vscode setup` task integration as a baseline, not a Marketplace extension; define and test the extension boundary before publishing one.
+- [ ] Run moderated usability sessions and task-based evaluation with developers using different agent/provider setups; use the findings to set measurable targets for setup success, task completion, error recovery, and trust comprehension.
+- [ ] Preserve the core safety invariants across every interface: secret-safe displays, explicit user-controlled promotion, no silent provider execution, and no hidden workspace writes.
+
+**Exit criterion:** Representative developers can install, configure, inspect, compare, and explicitly promote work using GhostD with demonstrated comprehension of source provenance, current state, cost, and write authority. Any GUI or editor surface remains a client of the same local GhostD core rather than a second source of truth.
