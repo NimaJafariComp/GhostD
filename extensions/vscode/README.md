@@ -2,6 +2,8 @@
 
 This extension is the workspace UI for a locally installed GhostD CLI. It does not read editor text, Codex chats, provider transcripts, credentials, window titles, or process state.
 
+Open **GhostD: Open dashboard** for a compact guide, detected-host readiness, captured sessions, and the main GhostD actions.
+
 ## Connect a workspace
 
 1. Install GhostD and ensure `ghost` is available to the VS Code extension host. Set `ghostd.cliPath` if it is not on that host's `PATH`.

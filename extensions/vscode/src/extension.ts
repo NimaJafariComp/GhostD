@@ -32,6 +32,14 @@ interface DetectedAgentHost {
   captureHost?: 'codex' | 'claude';
 }
 
+interface DashboardSnapshot {
+  workspace?: string;
+  connected: boolean;
+  sessions: CapturedSession[];
+  capabilities: string[];
+  detectedHosts: DetectedAgentHost[];
+}
+
 const knownAgentExtensions: ReadonlyArray<Omit<DetectedAgentHost, 'version'>> = [
   {
     name: 'Gemini Code Assist',
@@ -102,6 +110,7 @@ class GhostdController implements vscode.Disposable {
   private readonly sessions = new GhostSessionsProvider();
   private readonly bridgeProcesses = new Map<string, ReturnType<typeof spawn>>();
   private sessionView: vscode.TreeView<GhostSessionItem> | undefined;
+  private dashboard: vscode.WebviewPanel | undefined;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.statusBar.command = 'ghostd.connect';
@@ -283,6 +292,21 @@ class GhostdController implements vscode.Disposable {
     }), { placeHolder: 'Detected IDE agent hosts. Detection never reads chat data.' });
   }
 
+  public async openDashboard(): Promise<void> {
+    if (this.dashboard === undefined) {
+      const panel = vscode.window.createWebviewPanel('ghostd.dashboard', 'GhostD', vscode.ViewColumn.One, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'resources')],
+      });
+      panel.onDidDispose(() => { this.dashboard = undefined; }, undefined, this.context.subscriptions);
+      panel.webview.onDidReceiveMessage((message: unknown) => { void this.handleDashboardMessage(message); }, undefined, this.context.subscriptions);
+      this.dashboard = panel;
+    }
+    this.dashboard.reveal(vscode.ViewColumn.One, false);
+    await this.updateDashboard();
+  }
+
   public async disconnect(): Promise<void> {
     const workspace = await this.workspace();
     if (workspace === undefined) return;
@@ -301,6 +325,7 @@ class GhostdController implements vscode.Disposable {
   public dispose(): void {
     this.statusBar.dispose();
     this.output.dispose();
+    this.dashboard?.dispose();
     for (const process of this.bridgeProcesses.values()) process.kill('SIGTERM');
   }
 
@@ -417,6 +442,49 @@ class GhostdController implements vscode.Disposable {
     }
   }
 
+  private async updateDashboard(): Promise<void> {
+    const dashboard = this.dashboard;
+    if (dashboard === undefined) return;
+    const snapshot = await this.dashboardSnapshot();
+    const logo = dashboard.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'ghostd-icon.png'));
+    dashboard.webview.html = dashboardHtml(snapshot, logo.toString(), nonce());
+  }
+
+  private async dashboardSnapshot(): Promise<DashboardSnapshot> {
+    const workspace = await this.workspace();
+    const detectedHosts = this.detectedAgentHosts();
+    if (workspace === undefined) return { connected: false, sessions: [], capabilities: [], detectedHosts };
+    const credentials = await this.credentials(workspace);
+    if (credentials === undefined) return { workspace: workspace.uri.fsPath, connected: false, sessions: [], capabilities: [], detectedHosts };
+    try {
+      const [status, list] = await Promise.all([
+        requestBridge(credentials, 'capture/status'),
+        requestBridge(credentials, 'sessions/list'),
+      ]);
+      return { workspace: workspace.uri.fsPath, connected: true, sessions: readSessions(list['sessions']), capabilities: readCapabilities(status['capabilities']), detectedHosts };
+    } catch {
+      return { workspace: workspace.uri.fsPath, connected: false, sessions: [], capabilities: [], detectedHosts };
+    }
+  }
+
+  private async handleDashboardMessage(message: unknown): Promise<void> {
+    if (!isRecord(message) || message['type'] !== 'action' || typeof message['action'] !== 'string') return;
+    switch (message['action']) {
+      case 'connect': await this.connect(); break;
+      case 'configureCodex': await this.configureCodex(); break;
+      case 'configureClaude': await this.configureClaude(); break;
+      case 'configureGemini': await this.configureGemini(); break;
+      case 'selectSession': await this.selectSession(); break;
+      case 'showContext': await this.showContext(); break;
+      case 'copyHandoff': await this.copyHandoff(); break;
+      case 'disconnect': await this.disconnect(); break;
+      case 'showHosts': await this.showDetectedHosts(); break;
+      case 'refresh': await this.refresh(); break;
+      default: return;
+    }
+    await this.updateDashboard();
+  }
+
   /**
    * VS Code's GUI extension host does not inherit every terminal shell path.
    * An explicit, absolute host CLI path is opt-in and only used while GhostD
@@ -463,6 +531,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('ghostd.showContext', () => controller.showContext().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.copyHandoff', () => controller.copyHandoff().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.showDetectedHosts', () => controller.showDetectedHosts().catch((error: unknown) => showCommandError(error))),
+    vscode.commands.registerCommand('ghostd.openDashboard', () => controller.openDashboard().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.disconnect', () => controller.disconnect().catch((error: unknown) => showCommandError(error))),
     vscode.commands.registerCommand('ghostd.refresh', () => controller.refresh().catch((error: unknown) => showCommandError(error))),
     vscode.window.onDidChangeActiveTextEditor(() => { void controller.refresh(); }),
@@ -504,6 +573,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+function nonce(): string {
+  return randomUUID().replaceAll('-', '');
+}
+
+function dashboardHtml(snapshot: DashboardSnapshot, logo: string, scriptNonce: string): string {
+  const sessions = snapshot.sessions.length === 0
+    ? '<p class="empty">No captured sessions yet. Configure a supported host, then start or resume its agent session.</p>'
+    : `<ul>${snapshot.sessions.slice(0, 5).map((session) => `<li><strong>${escapeHtml(session.source)}</strong><span>${session.endedAt === undefined ? 'open' : 'ended'} · ${escapeHtml(session.sourceSessionId)}</span></li>`).join('')}</ul>`;
+  const hosts = snapshot.detectedHosts.length === 0
+    ? '<p class="empty">No known agent extensions detected in this IDE.</p>'
+    : `<ul>${snapshot.detectedHosts.map((host) => {
+      const capability = host.captureHost === undefined ? undefined : snapshot.capabilities.find((item) => item.startsWith(`${host.captureHost}: `));
+      const status = capability ?? (host.capture === 'supported' ? 'setup needed' : 'capture unavailable');
+      return `<li><span><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.extensionId)} v${escapeHtml(host.version)}</small></span><em class="${host.capture === 'supported' ? 'ready' : 'blocked'}">${escapeHtml(status)}</em></li>`;
+    }).join('')}</ul>`;
+  const connection = snapshot.connected ? 'Connected locally' : 'Not connected';
+  const workspace = snapshot.workspace ?? 'Open a folder to begin';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${logo}; style-src 'unsafe-inline'; script-src 'nonce-${scriptNonce}';"><title>GhostD</title><style>
+:root{color-scheme:dark light;font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background)}*{box-sizing:border-box}body{margin:0;padding:28px;max-width:980px}.hero{display:flex;gap:20px;align-items:center;padding:24px;background:linear-gradient(130deg,color-mix(in srgb,var(--vscode-editor-background) 82%,#165db4),var(--vscode-editor-background));border:1px solid var(--vscode-panel-border);border-radius:16px}.hero img{width:70px;height:70px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font:600 11px var(--vscode-editor-font-family);color:#4ed7ff;margin:0 0 5px}.hero h1{font-size:28px;margin:0}.hero p{margin:5px 0 0;line-height:1.45;color:var(--vscode-descriptionForeground)}.status{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0;padding:14px 16px;border-left:3px solid #46d6ff;background:var(--vscode-sideBar-background)}.status strong{display:block}.status span{font-size:12px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:620px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:16px}.card{border:1px solid var(--vscode-panel-border);border-radius:12px;padding:18px;background:var(--vscode-editorWidget-background)}h2{font-size:14px;margin:0 0 12px}p,li{font-size:13px;line-height:1.5}.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.actions button:first-child{grid-column:span 2}button{border:1px solid var(--vscode-button-border,transparent);border-radius:7px;padding:9px 10px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);font:600 12px var(--vscode-font-family);cursor:pointer}button.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button:hover{background:var(--vscode-button-hoverBackground)}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--vscode-panel-border)}li:first-child{border-top:0;padding-top:0}small,li span{display:block;font-size:11px;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family)}em{font-style:normal;font:600 11px var(--vscode-editor-font-family);white-space:nowrap}.ready{color:#48d597}.blocked{color:#e5ad55}.empty{color:var(--vscode-descriptionForeground);margin:0}.safety{margin-top:16px;padding:12px 14px;border-radius:8px;background:color-mix(in srgb,#7a45ff 13%,var(--vscode-editorWidget-background));color:var(--vscode-descriptionForeground)}.safety strong{color:var(--vscode-foreground)}code{font-family:var(--vscode-editor-font-family)}@media(max-width:500px){body{padding:16px}.hero{padding:18px}.actions{grid-template-columns:1fr}.actions button:first-child{grid-column:auto}.status{align-items:flex-start;flex-direction:column}}</style></head><body>
+<header class="hero"><img src="${logo}" alt="GhostD"><div><p class="eyebrow">Local context ledger</p><h1>GhostD</h1><p>Keep agent context portable, revision-pinned, and out of the original chat.</p></div></header>
+<section class="status"><div><strong>${escapeHtml(connection)}</strong><span>${escapeHtml(workspace)}</span></div><button data-action="refresh">Refresh</button></section>
+<main class="grid"><section class="card"><h2>Actions</h2><div class="actions"><button class="primary" data-action="connect">Connect this workspace</button><button data-action="configureCodex">Configure Codex</button><button data-action="configureClaude">Configure Claude</button><button data-action="configureGemini">Configure Gemini CLI</button><button data-action="selectSession">Select session</button><button data-action="showContext">Show context</button><button data-action="copyHandoff">Copy branch handoff</button><button data-action="showHosts">Detected hosts</button><button data-action="disconnect">Disconnect</button></div></section><section class="card"><h2>Captured sessions</h2>${sessions}</section><section class="card"><h2>IDE agent hosts</h2>${hosts}</section><section class="card"><h2>Features &amp; terminal commands</h2><p>Capture documented lifecycle events, redact stored secrets, and create an exact context revision for sidecar questions.</p><p><code>ghost question "What is true now?"</code><br><code>ghost codex "…"</code> · <code>ghost claude "…"</code> · <code>ghost gemini "…"</code><br><code>ghost session list</code> · <code>ghost session use &lt;number&gt;</code></p></section></main><aside class="safety"><strong>Safety boundary.</strong> GhostD does not scrape chat panes, provider transcripts, credentials, window titles, or hidden extension storage. Detected hosts are not automatically captured.</aside>
+<script nonce="${scriptNonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('[data-action]').forEach((button)=>button.addEventListener('click',()=>vscode.postMessage({type:'action',action:button.dataset.action})));</script></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 function showCommandError(error: unknown): void {
