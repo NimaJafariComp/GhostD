@@ -63,7 +63,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Define `ghost ask <agent> "…"` as ephemeral and `ghost ask <branch> "…"` as persistent.
 - [x] Store provider handles separately from canonical Ghost branches.
 - [x] Record materialization decisions, source revision, token counts, configured cost, latency, redacted answer text, and provider-failure recovery details.
-- [x] Run deterministic context-pinning and token/latency evaluations with mocked provider responses, plus a user-run bounded live Claude materialization that returned a response with Ghost revision and workspace-snapshot attribution. No credential was stored in GhostD or this repository.
+- [x] Run deterministic context-pinning and token/latency evaluations with mocked provider responses, plus bounded live Claude materializations that returned a response with Ghost revision and workspace-snapshot attribution. The latest isolated live verification used a one-event Ghost context and a 64-token cap and returned `GhostD Claude live materialization succeeded.` No credential was stored in GhostD or this repository.
 
 ## Phase 3 — Synchronization and temporal context
 
@@ -83,7 +83,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 - [x] Add explicit merge/copy flows. Copies share the source revision without duplicating events; merges are audited, same-session fast-forwards and never infer conflict resolution. Promotion into a branch named `main` is therefore always an explicit `ghost merge` action.
 - [x] Add `ghost switch <agent>` for intentional cross-agent continuation. It records the switch and renders a provenance-bearing handoff at the branch's exact revision without materializing or assuming provider state.
 - [x] Test Gemini request/response parsing, Gemini source normalization, frozen-revision two-provider comparisons, malformed/unsupported evidence rejection, partial provider failure, audit retrieval, and explicit copy/merge/switch behavior (46 automated tests). A local CLI smoke test validates rebase, copy, merge, and switch without calling a provider.
-- [x] Run a user-operated, bounded live Gemini materialization after setting `GEMINI_API_KEY`. It returned `GhostD Gemini live test succeeded.` with exact Ghost revision and workspace-snapshot attribution. No credential was stored in GhostD or this repository.
+- [x] Run bounded live Gemini materializations after setting `GEMINI_API_KEY`. The latest isolated live verification used a one-event Ghost context and a 64-token cap and returned `GhostD Gemini live materialization succeeded.` with exact Ghost revision and workspace-snapshot attribution. No credential was stored in GhostD or this repository.
 
 ## Phase 5 — Write-capable branches
 
