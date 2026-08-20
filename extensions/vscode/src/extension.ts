@@ -399,7 +399,12 @@ class GhostdController implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     const existing = this.bridgeProcesses.get(workspace.uri.fsPath);
     if (existing === undefined || existing.exitCode !== null) {
-      const child = spawn(this.cliPath(workspace), ['bridge', 'serve'], { cwd: workspace.uri.fsPath, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+      const child = spawn(this.cliPath(workspace), ['bridge', 'serve'], {
+        cwd: workspace.uri.fsPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+        env: this.bridgeEnvironment(workspace),
+      });
       child.stdout.on('data', (chunk: Buffer) => this.output.appendLine(chunk.toString().trimEnd()));
       child.stderr.on('data', (chunk: Buffer) => this.output.appendLine(chunk.toString().trimEnd()));
       this.bridgeProcesses.set(workspace.uri.fsPath, child);
@@ -510,10 +515,28 @@ class GhostdController implements vscode.Disposable, vscode.WebviewViewProvider 
   private commandEnvironment(workspace: vscode.WorkspaceFolder, host?: 'codex' | 'claude' | 'gemini'): NodeJS.ProcessEnv {
     if (host === undefined) return process.env;
     const configuredPath = vscode.workspace.getConfiguration('ghostd', workspace.uri).get<string>(`${host}CliPath`, '').trim();
-    if (!isAbsolute(configuredPath)) return process.env;
+    return this.environmentWithCliPaths(isAbsolute(configuredPath) ? [configuredPath] : []);
+  }
+
+  /**
+   * The GUI extension host does not inherit an interactive shell PATH. The
+   * bridge probes every provider, so it needs every explicitly configured
+   * provider CLI directory, not just the host currently being configured.
+   */
+  private bridgeEnvironment(workspace: vscode.WorkspaceFolder): NodeJS.ProcessEnv {
+    const configuration = vscode.workspace.getConfiguration('ghostd', workspace.uri);
+    const paths = (['codex', 'claude', 'gemini'] as const)
+      .map((host) => configuration.get<string>(`${host}CliPath`, '').trim())
+      .filter(isAbsolute);
+    return this.environmentWithCliPaths(paths);
+  }
+
+  private environmentWithCliPaths(cliPaths: readonly string[]): NodeJS.ProcessEnv {
+    if (cliPaths.length === 0) return process.env;
     const pathKey = process.platform === 'win32' && process.env['Path'] !== undefined ? 'Path' : 'PATH';
     const inheritedPath = process.env[pathKey] ?? '';
-    return { ...process.env, [pathKey]: `${dirname(configuredPath)}${delimiter}${inheritedPath}` };
+    const directories = [...new Set(cliPaths.map(dirname))];
+    return { ...process.env, [pathKey]: `${directories.join(delimiter)}${delimiter}${inheritedPath}` };
   }
 
   private setStatus(text: string, tooltip: string, command: string): void {
