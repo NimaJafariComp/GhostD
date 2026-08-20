@@ -1,5 +1,5 @@
 import type { AgentCapabilities } from '../../core/materialization.js';
-import type { TargetAdapter } from '../targets.js';
+import type { ContextTargetAdapter } from '../targets.js';
 
 const CLAUDE_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_API_VERSION = '2023-06-01';
@@ -32,7 +32,7 @@ export class ClaudeApiError extends Error {
   }
 }
 
-export class ClaudeTargetAdapter implements TargetAdapter {
+export class ClaudeTargetAdapter implements ContextTargetAdapter {
   public readonly capabilities: AgentCapabilities = {
     provider: 'claude',
     supportsNativeFork: false,

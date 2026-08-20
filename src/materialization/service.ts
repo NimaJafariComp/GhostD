@@ -1,5 +1,7 @@
 import { ClaudeApiError, ClaudeTargetAdapter } from '../adapters/claude/target.js';
+import { GeminiApiError, GeminiTargetAdapter } from '../adapters/gemini/target.js';
 import { chooseMaterializationStrategy } from '../adapters/targets.js';
+import type { ContextTargetAdapter } from '../adapters/targets.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import type { GhostBranch, GhostRevision, WorkspaceSnapshot } from '../core/graph.js';
 import type { MaterializationMode, MaterializationRun } from '../core/materialization.js';
@@ -31,9 +33,18 @@ export class MaterializationService {
     private readonly claude: ClaudeTargetAdapter = new ClaudeTargetAdapter(),
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly clock: () => number = () => Date.now(),
+    private readonly gemini: GeminiTargetAdapter = new GeminiTargetAdapter(),
   ) {}
 
   public async askClaude(input: AskClaudeInput): Promise<AskClaudeResult> {
+    return this.askTarget(input, this.claude);
+  }
+
+  public async askGemini(input: AskClaudeInput): Promise<AskClaudeResult> {
+    return this.askTarget(input, this.gemini);
+  }
+
+  private async askTarget(input: AskClaudeInput, target: ContextTargetAdapter): Promise<AskClaudeResult> {
     if (input.prompt.trim().length === 0) {
       throw new Error('An ask prompt is required.');
     }
@@ -44,12 +55,12 @@ export class MaterializationService {
       compileContext(this.database.eventsForSessionThrough(revision.sessionId, revision.eventHighWaterMark)),
       true,
     );
-    const strategy = chooseMaterializationStrategy(this.claude.capabilities);
+    const strategy = chooseMaterializationStrategy(target.capabilities);
     const startedAt = this.now();
     const run = this.database.startMaterializationRun({
       branchId: branch.id,
-      provider: this.claude.capabilities.provider,
-      model: this.claude.model,
+      provider: target.capabilities.provider,
+      model: target.model,
       sourceRevisionId: revision.id,
       mode: input.mode,
       strategy,
@@ -60,14 +71,14 @@ export class MaterializationService {
     try {
       const remoteContext = redactText(context, 'remote').value;
       const remotePrompt = redactText(input.prompt, 'remote').value;
-      const result = await this.claude.ask({
-        system: systemPrompt(revision, snapshot),
+      const result = await target.ask({
+        system: systemPrompt(target.capabilities.provider, revision, snapshot),
         prompt: `${remoteContext}\n\nUSER ASK\n${remotePrompt}`,
       });
       const latencyMs = Math.max(0, this.clock() - startedAtMs);
       const materialization = this.database.recordMaterialization(
         branch.name,
-        this.claude.capabilities.provider,
+        target.capabilities.provider,
         revision.id,
         result.providerHandle,
         this.now(),
@@ -75,7 +86,7 @@ export class MaterializationService {
       const cost = estimatedCost(result.inputTokens, result.outputTokens);
       const completed = this.database.completeMaterializationRun(run.id, {
         materializationId: materialization.id,
-        providerHandle: result.providerHandle,
+        ...(result.providerHandle === undefined ? {} : { providerHandle: result.providerHandle }),
         ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
         ...(result.outputTokens === undefined ? {} : { outputTokens: result.outputTokens }),
         ...(cost === undefined ? {} : { estimatedCostUsd: cost }),
@@ -96,9 +107,9 @@ export class MaterializationService {
   }
 }
 
-function systemPrompt(revision: GhostRevision, snapshot: WorkspaceSnapshot): string {
+function systemPrompt(provider: string, revision: GhostRevision, snapshot: WorkspaceSnapshot): string {
   return [
-    'You are GhostD\'s read-only Claude target.',
+    `You are GhostD's read-only ${provider} target.`,
     'Answer only from the supplied Ghost context and the user ask. Do not assume hidden provider state.',
     'You have no tools, workspace access, or authority to modify files, Git state, or Ghost history.',
     `Ghost revision: ${revision.id}`,
@@ -131,10 +142,10 @@ function requiredSnapshot(database: GhostDatabase, id: string): WorkspaceSnapsho
 }
 
 function failureCode(error: unknown): string {
-  if (error instanceof ClaudeApiError) {
+  if (error instanceof ClaudeApiError || error instanceof GeminiApiError) {
     return `http_${error.status}`;
   }
-  if (error instanceof Error && error.message === 'ANTHROPIC_API_KEY is required to ask Claude.') {
+  if (error instanceof Error && /API_KEY/.test(error.message)) {
     return 'missing_api_key';
   }
   return 'provider_error';

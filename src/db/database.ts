@@ -21,7 +21,18 @@ import type {
   MaterializationRun,
   StartMaterializationRun,
 } from '../core/materialization.js';
-import { redactEvent } from '../privacy/redaction.js';
+import type {
+  AgentSwitch,
+  BranchCopy,
+  BranchMerge,
+  BranchMergeResult,
+  ComparisonInsight,
+  ComparisonParticipant,
+  ComparisonRun,
+  InsightKind,
+  InsightPayload,
+} from '../core/reasoning.js';
+import { redactEvent, redactText } from '../privacy/redaction.js';
 
 export interface StoredEvent extends GhostEvent {
   sequence: number;
@@ -117,6 +128,68 @@ interface BranchRebaseRow {
   from_revision_id: string;
   to_revision_id: string;
   added_event_count: number;
+  created_at: string;
+}
+
+interface ComparisonRunRow {
+  id: string;
+  branch_id: string;
+  frozen_revision_id: string;
+  workspace_snapshot_id: string;
+  prompt: string;
+  status: ComparisonRun['status'];
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface ComparisonParticipantRow {
+  id: string;
+  comparison_run_id: string;
+  provider: string;
+  model: string;
+  status: ComparisonParticipant['status'];
+  provider_handle: string | null;
+  response_text: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  latency_ms: number | null;
+  failure_code: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface ComparisonInsightRow {
+  id: string;
+  comparison_run_id: string;
+  participant_id: string;
+  kind: InsightKind;
+  text: string;
+  event_ids_json: string;
+  created_at: string;
+}
+
+interface BranchCopyRow {
+  id: string;
+  source_branch_id: string;
+  copied_branch_id: string;
+  revision_id: string;
+  created_at: string;
+}
+
+interface BranchMergeRow {
+  id: string;
+  source_branch_id: string;
+  target_branch_id: string;
+  from_revision_id: string;
+  to_revision_id: string;
+  created_at: string;
+}
+
+interface AgentSwitchRow {
+  id: string;
+  branch_id: string;
+  target_agent: string;
+  revision_id: string;
   created_at: string;
 }
 
@@ -567,6 +640,356 @@ export class GhostDatabase {
     return rows.map(branchRebaseFromRow);
   }
 
+  /** Creates an immutable comparison request pinned to the branch's current revision. */
+  public createComparisonRun(branchName: string, prompt: string, createdAt = new Date().toISOString()): ComparisonRun {
+    if (prompt.trim().length === 0) {
+      throw new Error('A comparison prompt is required.');
+    }
+    const branch = this.branch(branchName);
+    if (branch === undefined) {
+      throw new Error(`Branch ${branchName} does not exist.`);
+    }
+    if (branch.lifecycle !== 'open') {
+      throw new Error(`Branch ${branchName} is closed.`);
+    }
+    const revision = this.revision(branch.headRevisionId);
+    if (revision === undefined) {
+      throw new Error(`Branch ${branchName} references a missing head revision.`);
+    }
+    const run: ComparisonRun = {
+      id: randomUUID(),
+      branchId: branch.id,
+      frozenRevisionId: revision.id,
+      workspaceSnapshotId: revision.workspaceSnapshotId,
+      prompt: redactText(prompt, 'storage').value,
+      status: 'running',
+      createdAt,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO comparison_runs (
+           id, branch_id, frozen_revision_id, workspace_snapshot_id, prompt, status, created_at, completed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(run.id, run.branchId, run.frozenRevisionId, run.workspaceSnapshotId, run.prompt, run.status, run.createdAt);
+    return run;
+  }
+
+  public comparisonRun(id: string): ComparisonRun | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, branch_id, frozen_revision_id, workspace_snapshot_id, prompt, status, created_at, completed_at
+         FROM comparison_runs WHERE id = ?`,
+      )
+      .get(id) as ComparisonRunRow | undefined;
+    return row === undefined ? undefined : comparisonRunFromRow(row);
+  }
+
+  public startComparisonParticipant(comparisonRunId: string, provider: string, model: string, createdAt = new Date().toISOString()): ComparisonParticipant {
+    const run = this.comparisonRun(comparisonRunId);
+    if (run === undefined) {
+      throw new Error(`Comparison run ${comparisonRunId} does not exist.`);
+    }
+    if (run.status !== 'running') {
+      throw new Error(`Comparison run ${comparisonRunId} is already ${run.status}.`);
+    }
+    if (provider.trim().length === 0 || model.trim().length === 0) {
+      throw new Error('A comparison participant requires provider and model names.');
+    }
+    const participant: ComparisonParticipant = {
+      id: randomUUID(),
+      comparisonRunId,
+      provider,
+      model,
+      status: 'running',
+      createdAt,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO comparison_participants (
+           id, comparison_run_id, provider, model, status, provider_handle, response_text,
+           input_tokens, output_tokens, latency_ms, failure_code, created_at, completed_at
+         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)`,
+      )
+      .run(participant.id, participant.comparisonRunId, participant.provider, participant.model, participant.status, participant.createdAt);
+    return participant;
+  }
+
+  public completeComparisonParticipant(
+    id: string,
+    outcome: Omit<ComparisonParticipant, 'id' | 'comparisonRunId' | 'provider' | 'model' | 'status' | 'createdAt'> & { responseText: string; completedAt: string },
+  ): ComparisonParticipant {
+    const participant = this.comparisonParticipant(id);
+    if (participant === undefined) {
+      throw new Error(`Comparison participant ${id} does not exist.`);
+    }
+    if (participant.status !== 'running') {
+      throw new Error(`Comparison participant ${id} is already ${participant.status}.`);
+    }
+    const responseText = redactText(outcome.responseText, 'storage').value;
+    this.database
+      .prepare(
+        `UPDATE comparison_participants
+         SET status = ?, provider_handle = ?, response_text = ?, input_tokens = ?, output_tokens = ?, latency_ms = ?, completed_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        'succeeded',
+        outcome.providerHandle ?? null,
+        responseText,
+        outcome.inputTokens ?? null,
+        outcome.outputTokens ?? null,
+        outcome.latencyMs ?? null,
+        outcome.completedAt,
+        id,
+      );
+    return {
+      ...participant,
+      status: 'succeeded',
+      ...(outcome.providerHandle === undefined ? {} : { providerHandle: outcome.providerHandle }),
+      responseText,
+      ...(outcome.inputTokens === undefined ? {} : { inputTokens: outcome.inputTokens }),
+      ...(outcome.outputTokens === undefined ? {} : { outputTokens: outcome.outputTokens }),
+      ...(outcome.latencyMs === undefined ? {} : { latencyMs: outcome.latencyMs }),
+      completedAt: outcome.completedAt,
+    };
+  }
+
+  public failComparisonParticipant(id: string, failureCode: string, completedAt: string, latencyMs?: number): ComparisonParticipant {
+    const participant = this.comparisonParticipant(id);
+    if (participant === undefined) {
+      throw new Error(`Comparison participant ${id} does not exist.`);
+    }
+    if (participant.status !== 'running') {
+      throw new Error(`Comparison participant ${id} is already ${participant.status}.`);
+    }
+    this.database
+      .prepare('UPDATE comparison_participants SET status = ?, failure_code = ?, latency_ms = ?, completed_at = ? WHERE id = ?')
+      .run('failed', failureCode, latencyMs ?? null, completedAt, id);
+    return { ...participant, status: 'failed', failureCode, ...(latencyMs === undefined ? {} : { latencyMs }), completedAt };
+  }
+
+  public comparisonParticipant(id: string): ComparisonParticipant | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, comparison_run_id, provider, model, status, provider_handle, response_text,
+                input_tokens, output_tokens, latency_ms, failure_code, created_at, completed_at
+         FROM comparison_participants WHERE id = ?`,
+      )
+      .get(id) as ComparisonParticipantRow | undefined;
+    return row === undefined ? undefined : comparisonParticipantFromRow(row);
+  }
+
+  public comparisonParticipants(comparisonRunId: string): ComparisonParticipant[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, comparison_run_id, provider, model, status, provider_handle, response_text,
+                input_tokens, output_tokens, latency_ms, failure_code, created_at, completed_at
+         FROM comparison_participants WHERE comparison_run_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(comparisonRunId) as unknown as ComparisonParticipantRow[];
+    return rows.map(comparisonParticipantFromRow);
+  }
+
+  public recordComparisonInsights(participantId: string, payload: InsightPayload, createdAt = new Date().toISOString()): ComparisonInsight[] {
+    const participant = this.comparisonParticipant(participantId);
+    if (participant === undefined || participant.status !== 'succeeded') {
+      throw new Error(`Comparison participant ${participantId} has no successful response.`);
+    }
+    const records: Array<{ kind: InsightKind; text: string; eventIds: string[] }> = [
+      ...payload.findings.map((text) => ({ kind: 'finding' as const, text, eventIds: [] })),
+      ...payload.evidence.map(({ text, eventIds }) => ({ kind: 'evidence' as const, text, eventIds })),
+      ...payload.recommendations.map((text) => ({ kind: 'recommendation' as const, text, eventIds: [] })),
+    ];
+    return records.map(({ kind, text, eventIds }) => {
+      const insight: ComparisonInsight = {
+        id: randomUUID(),
+        comparisonRunId: participant.comparisonRunId,
+        participantId,
+        kind,
+        text: redactText(text, 'storage').value,
+        eventIds,
+        createdAt,
+      };
+      this.database
+        .prepare(
+          `INSERT INTO comparison_insights (
+             id, comparison_run_id, participant_id, kind, text, event_ids_json, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(insight.id, insight.comparisonRunId, insight.participantId, insight.kind, insight.text, JSON.stringify(insight.eventIds), insight.createdAt);
+      return insight;
+    });
+  }
+
+  public comparisonInsights(comparisonRunId: string): ComparisonInsight[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, comparison_run_id, participant_id, kind, text, event_ids_json, created_at
+         FROM comparison_insights WHERE comparison_run_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(comparisonRunId) as unknown as ComparisonInsightRow[];
+    return rows.map(comparisonInsightFromRow);
+  }
+
+  public finalizeComparisonRun(id: string, completedAt = new Date().toISOString()): ComparisonRun {
+    const run = this.comparisonRun(id);
+    if (run === undefined) {
+      throw new Error(`Comparison run ${id} does not exist.`);
+    }
+    if (run.status !== 'running') {
+      return run;
+    }
+    const participants = this.comparisonParticipants(id);
+    if (participants.length === 0 || participants.some(({ status }) => status === 'running')) {
+      throw new Error(`Comparison run ${id} has unfinished participants.`);
+    }
+    const succeeded = participants.filter(({ status }) => status === 'succeeded').length;
+    const status: ComparisonRun['status'] = succeeded === participants.length ? 'succeeded' : succeeded > 0 ? 'partial' : 'failed';
+    this.database
+      .prepare('UPDATE comparison_runs SET status = ?, completed_at = ? WHERE id = ?')
+      .run(status, completedAt, id);
+    return { ...run, status, completedAt };
+  }
+
+  /** Explicit copy creates a new logical branch at the source head without duplicating event history. */
+  public copyBranch(sourceName: string, copiedName: string, createdAt = new Date().toISOString()): BranchCopy {
+    const source = this.branch(sourceName);
+    if (source === undefined) {
+      throw new Error(`Branch ${sourceName} does not exist.`);
+    }
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const copied = this.createBranch(copiedName, source.headRevisionId, source.persistence);
+      const copy: BranchCopy = {
+        id: randomUUID(),
+        sourceBranchId: source.id,
+        copiedBranchId: copied.id,
+        revisionId: source.headRevisionId,
+        createdAt,
+      };
+      this.database
+        .prepare('INSERT INTO branch_copies (id, source_branch_id, copied_branch_id, revision_id, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(copy.id, copy.sourceBranchId, copy.copiedBranchId, copy.revisionId, copy.createdAt);
+      this.database.exec('COMMIT');
+      return copy;
+    } catch (error: unknown) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  public copiesFromBranch(name: string): BranchCopy[] {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, source_branch_id, copied_branch_id, revision_id, created_at
+         FROM branch_copies WHERE source_branch_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(branch.id) as unknown as BranchCopyRow[];
+    return rows.map(branchCopyFromRow);
+  }
+
+  /** Explicit merge may only fast-forward a same-session target; it never guesses a conflict resolution. */
+  public mergeBranches(sourceName: string, targetName: string, createdAt = new Date().toISOString()): BranchMergeResult {
+    const source = this.branch(sourceName);
+    const target = this.branch(targetName);
+    if (source === undefined || target === undefined) {
+      throw new Error('Both source and target branches must exist.');
+    }
+    if (target.lifecycle !== 'open') {
+      throw new Error(`Branch ${targetName} is closed.`);
+    }
+    if (source.originatingSessionId !== target.originatingSessionId) {
+      throw new Error('Cannot merge branches from different sessions without an explicit cross-session merge strategy.');
+    }
+    if (source.headRevisionId === target.headRevisionId) {
+      return { targetBranchId: target.id, headRevisionId: target.headRevisionId, merged: false };
+    }
+    if (!this.isRevisionAncestor(target.headRevisionId, source.headRevisionId)) {
+      throw new Error(`Cannot merge ${sourceName} into ${targetName}: target is not an ancestor of source.`);
+    }
+    const merge: BranchMerge = {
+      id: randomUUID(),
+      sourceBranchId: source.id,
+      targetBranchId: target.id,
+      fromRevisionId: target.headRevisionId,
+      toRevisionId: source.headRevisionId,
+      createdAt,
+    };
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      this.database
+        .prepare('UPDATE branches SET head_revision_id = ?, tracking_revision_id = ? WHERE id = ?')
+        .run(source.headRevisionId, source.headRevisionId, target.id);
+      this.database
+        .prepare(
+          `INSERT INTO branch_merges (
+             id, source_branch_id, target_branch_id, from_revision_id, to_revision_id, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(merge.id, merge.sourceBranchId, merge.targetBranchId, merge.fromRevisionId, merge.toRevisionId, merge.createdAt);
+      this.database.exec('COMMIT');
+    } catch (error: unknown) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+    return { targetBranchId: target.id, headRevisionId: source.headRevisionId, merged: true, merge };
+  }
+
+  public mergesIntoBranch(name: string): BranchMerge[] {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, source_branch_id, target_branch_id, from_revision_id, to_revision_id, created_at
+         FROM branch_merges WHERE target_branch_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(branch.id) as unknown as BranchMergeRow[];
+    return rows.map(branchMergeFromRow);
+  }
+
+  /** Records an intentional, provider-independent continuation handoff. */
+  public switchAgent(branchName: string, targetAgent: string, createdAt = new Date().toISOString()): AgentSwitch {
+    if (targetAgent.trim().length === 0) {
+      throw new Error('A target agent is required.');
+    }
+    const branch = this.branch(branchName);
+    if (branch === undefined || branch.lifecycle !== 'open') {
+      throw new Error(`Branch ${branchName} must be open to switch agents.`);
+    }
+    const switchRecord: AgentSwitch = {
+      id: randomUUID(),
+      branchId: branch.id,
+      targetAgent,
+      revisionId: branch.headRevisionId,
+      createdAt,
+    };
+    this.database
+      .prepare('INSERT INTO agent_switches (id, branch_id, target_agent, revision_id, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(switchRecord.id, switchRecord.branchId, switchRecord.targetAgent, switchRecord.revisionId, switchRecord.createdAt);
+    return switchRecord;
+  }
+
+  public agentSwitches(name: string): AgentSwitch[] {
+    const branch = this.branch(name);
+    if (branch === undefined) {
+      throw new Error(`Branch ${name} does not exist.`);
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT id, branch_id, target_agent, revision_id, created_at
+         FROM agent_switches WHERE branch_id = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(branch.id) as unknown as AgentSwitchRow[];
+    return rows.map(agentSwitchFromRow);
+  }
+
   public startMaterializationRun(input: StartMaterializationRun): MaterializationRun {
     const branch = this.branchById(input.branchId);
     if (branch === undefined) {
@@ -820,6 +1243,86 @@ export class GhostDatabase {
       CREATE INDEX IF NOT EXISTS branch_rebases_branch_created
       ON branch_rebases(branch_id, created_at);
 
+      CREATE TABLE IF NOT EXISTS comparison_runs (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        frozen_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        workspace_snapshot_id TEXT NOT NULL REFERENCES workspace_snapshots(id) ON DELETE RESTRICT,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS comparison_runs_branch_created
+      ON comparison_runs(branch_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS comparison_participants (
+        id TEXT PRIMARY KEY,
+        comparison_run_id TEXT NOT NULL REFERENCES comparison_runs(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+        provider_handle TEXT,
+        response_text TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        latency_ms INTEGER,
+        failure_code TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS comparison_participants_run_created
+      ON comparison_participants(comparison_run_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS comparison_insights (
+        id TEXT PRIMARY KEY,
+        comparison_run_id TEXT NOT NULL REFERENCES comparison_runs(id) ON DELETE RESTRICT,
+        participant_id TEXT NOT NULL REFERENCES comparison_participants(id) ON DELETE RESTRICT,
+        kind TEXT NOT NULL CHECK (kind IN ('finding', 'evidence', 'recommendation')),
+        text TEXT NOT NULL,
+        event_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS comparison_insights_run_kind
+      ON comparison_insights(comparison_run_id, kind, created_at);
+
+      CREATE TABLE IF NOT EXISTS branch_copies (
+        id TEXT PRIMARY KEY,
+        source_branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        copied_branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS branch_copies_source_created
+      ON branch_copies(source_branch_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS branch_merges (
+        id TEXT PRIMARY KEY,
+        source_branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        target_branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        from_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        to_revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS branch_merges_target_created
+      ON branch_merges(target_branch_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS agent_switches (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        target_agent TEXT NOT NULL,
+        revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS agent_switches_branch_created
+      ON agent_switches(branch_id, created_at);
+
       CREATE TABLE IF NOT EXISTS materialization_runs (
         id TEXT PRIMARY KEY,
         branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
@@ -931,6 +1434,81 @@ function branchRebaseFromRow(row: BranchRebaseRow): BranchRebase {
     fromRevisionId: row.from_revision_id,
     toRevisionId: row.to_revision_id,
     addedEventCount: row.added_event_count,
+    createdAt: row.created_at,
+  };
+}
+
+function comparisonRunFromRow(row: ComparisonRunRow): ComparisonRun {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    frozenRevisionId: row.frozen_revision_id,
+    workspaceSnapshotId: row.workspace_snapshot_id,
+    prompt: row.prompt,
+    status: row.status,
+    createdAt: row.created_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
+}
+
+function comparisonParticipantFromRow(row: ComparisonParticipantRow): ComparisonParticipant {
+  return {
+    id: row.id,
+    comparisonRunId: row.comparison_run_id,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    ...(row.provider_handle === null ? {} : { providerHandle: row.provider_handle }),
+    ...(row.response_text === null ? {} : { responseText: row.response_text }),
+    ...(row.input_tokens === null ? {} : { inputTokens: row.input_tokens }),
+    ...(row.output_tokens === null ? {} : { outputTokens: row.output_tokens }),
+    ...(row.latency_ms === null ? {} : { latencyMs: row.latency_ms }),
+    ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
+    createdAt: row.created_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
+}
+
+function comparisonInsightFromRow(row: ComparisonInsightRow): ComparisonInsight {
+  const eventIds = JSON.parse(row.event_ids_json) as unknown;
+  return {
+    id: row.id,
+    comparisonRunId: row.comparison_run_id,
+    participantId: row.participant_id,
+    kind: row.kind,
+    text: row.text,
+    eventIds: Array.isArray(eventIds) && eventIds.every((value) => typeof value === 'string') ? eventIds : [],
+    createdAt: row.created_at,
+  };
+}
+
+function branchCopyFromRow(row: BranchCopyRow): BranchCopy {
+  return {
+    id: row.id,
+    sourceBranchId: row.source_branch_id,
+    copiedBranchId: row.copied_branch_id,
+    revisionId: row.revision_id,
+    createdAt: row.created_at,
+  };
+}
+
+function branchMergeFromRow(row: BranchMergeRow): BranchMerge {
+  return {
+    id: row.id,
+    sourceBranchId: row.source_branch_id,
+    targetBranchId: row.target_branch_id,
+    fromRevisionId: row.from_revision_id,
+    toRevisionId: row.to_revision_id,
+    createdAt: row.created_at,
+  };
+}
+
+function agentSwitchFromRow(row: AgentSwitchRow): AgentSwitch {
+  return {
+    id: row.id,
+    branchId: row.branch_id,
+    targetAgent: row.target_agent,
+    revisionId: row.revision_id,
     createdAt: row.created_at,
   };
 }

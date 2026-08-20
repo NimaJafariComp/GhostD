@@ -9,12 +9,14 @@ import { stdin as input, stdout as output } from 'node:process';
 import { CodexAdapter } from '../adapters/codex/adapter.js';
 import { hookCommand, installCodexHooks } from '../adapters/codex/setup.js';
 import { ClaudeSourceAdapter } from '../adapters/claude/source.js';
+import { GeminiSourceAdapter } from '../adapters/gemini/source.js';
 import { ProviderCliManager, providerCliNames } from '../adapters/provider-cli.js';
 import type { ProviderCliName } from '../adapters/provider-cli.js';
 import { compileContext, renderContext } from '../context/compiler.js';
 import { parseGhostEvent } from '../core/events.js';
 import { GhostDatabase } from '../db/database.js';
 import { MaterializationService } from '../materialization/service.js';
+import { ComparisonService } from '../reasoning/service.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
@@ -31,14 +33,24 @@ function usage(): string {
                             Show pending synchronization and stale materializations.
   ghost rebase <branch>     Explicitly advance a branch to its latest captured revision.
   ghost ask claude <prompt> Ask Claude ephemerally from the latest session checkpoint.
+  ghost ask gemini <prompt> Ask Gemini ephemerally from the latest session checkpoint.
   ghost ask <branch> <prompt>
                             Ask Claude from a persistent Ghost branch.
+  ghost compare <branch> <prompt>
+                            Run Claude and Gemini against one frozen branch revision.
+  ghost copy <source> <new-branch>
+                            Explicitly create a logical copy at the source branch revision.
+  ghost merge <source> <target>
+                            Explicitly fast-forward a same-session target branch.
+  ghost switch <codex|claude|gemini> <branch>
+                            Record and render a provider-independent continuation handoff.
   ghost providers           Report which supported provider CLIs are installed.
   ghost providers install <codex|claude|gemini|missing>
                             Install selected missing provider CLIs from their official npm packages.
   ghost setup                Initialize local storage and the project Codex adapter.
   ghost codex-hook           Receive a Codex hook event on standard input.
-  ghost claude-hook          Receive a Claude hook event on standard input.`;
+  ghost claude-hook          Receive a Claude hook event on standard input.
+  ghost gemini-hook          Receive a Gemini hook event on standard input.`;
 }
 
 function isProviderCliName(value: string): value is ProviderCliName {
@@ -197,7 +209,7 @@ async function ask(arguments_: string[]): Promise<void> {
   const target = arguments_.at(0);
   const prompt = arguments_.slice(1).join(' ').trim();
   if (target === undefined || prompt.length === 0) {
-    throw new Error('Usage: ghost ask <claude|branch> <prompt>.');
+    throw new Error('Usage: ghost ask <claude|gemini|branch> <prompt>.');
   }
 
   const database = await GhostDatabase.open(databasePath());
@@ -205,7 +217,8 @@ async function ask(arguments_: string[]): Promise<void> {
   try {
     let branchName = target;
     let mode: 'ephemeral' | 'persistent' = 'persistent';
-    if (target === 'claude') {
+    let provider: 'claude' | 'gemini' = 'claude';
+    if (target === 'claude' || target === 'gemini') {
       const sessionId = database.latestSessionId();
       if (sessionId === undefined) {
         throw new Error('No sessions have been captured. Run ghost ingest first.');
@@ -215,16 +228,97 @@ async function ask(arguments_: string[]): Promise<void> {
       database.createBranch(ephemeralBranchName, revision.id, 'ephemeral');
       branchName = ephemeralBranchName;
       mode = 'ephemeral';
+      provider = target;
     } else if (database.branch(branchName) === undefined) {
-      throw new Error(`Unknown target ${target}. Use claude or an existing branch name.`);
+      throw new Error(`Unknown target ${target}. Use claude, gemini, or an existing branch name.`);
     }
 
-    const result = await new MaterializationService(database).askClaude({ branchName, prompt, mode });
+    const service = new MaterializationService(database);
+    const result = provider === 'claude'
+      ? await service.askClaude({ branchName, prompt, mode })
+      : await service.askGemini({ branchName, prompt, mode });
     output.write(`${result.text}\n\nGhost revision: ${result.revision.id}\nWorkspace snapshot: ${result.snapshot.id}\n`);
   } finally {
     if (ephemeralBranchName !== undefined) {
       database.closeBranch(ephemeralBranchName);
     }
+    database.close();
+  }
+}
+
+async function compare(arguments_: string[]): Promise<void> {
+  const branchName = arguments_.at(0);
+  const prompt = arguments_.slice(1).join(' ').trim();
+  if (branchName === undefined || prompt.length === 0) {
+    throw new Error('Usage: ghost compare <branch> <prompt>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const result = await new ComparisonService(database).compare({ branchName, prompt });
+    output.write(`Comparison ${result.run.id}: ${result.run.status} at revision ${result.run.frozenRevisionId}.\n`);
+    for (const participant of result.participants) {
+      output.write(`- ${participant.provider}: ${participant.status}\n`);
+    }
+    for (const insight of result.insights) {
+      const evidence = insight.eventIds.length === 0 ? '' : ` [evidence: ${insight.eventIds.join(', ')}]`;
+      output.write(`- ${insight.kind}: ${insight.text}${evidence}\n`);
+    }
+  } finally {
+    database.close();
+  }
+}
+
+async function copy(arguments_: string[]): Promise<void> {
+  const source = arguments_.at(0);
+  const destination = arguments_.at(1);
+  if (source === undefined || destination === undefined || arguments_.length !== 2) {
+    throw new Error('Usage: ghost copy <source> <new-branch>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const result = database.copyBranch(source, destination);
+    output.write(`Copied ${source} to ${destination} at revision ${result.revisionId}.\n`);
+  } finally {
+    database.close();
+  }
+}
+
+async function merge(arguments_: string[]): Promise<void> {
+  const source = arguments_.at(0);
+  const target = arguments_.at(1);
+  if (source === undefined || target === undefined || arguments_.length !== 2) {
+    throw new Error('Usage: ghost merge <source> <target>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const result = database.mergeBranches(source, target);
+    output.write(result.merged
+      ? `Merged ${source} into ${target} at revision ${result.headRevisionId}.\n`
+      : `${target} is already at the same revision as ${source}.\n`);
+  } finally {
+    database.close();
+  }
+}
+
+async function switchAgent(arguments_: string[]): Promise<void> {
+  const targetAgent = arguments_.at(0);
+  const branchName = arguments_.at(1);
+  if (targetAgent === undefined || branchName === undefined || arguments_.length !== 2 || !['codex', 'claude', 'gemini'].includes(targetAgent)) {
+    throw new Error('Usage: ghost switch <codex|claude|gemini> <branch>.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    const handoff = database.switchAgent(branchName, targetAgent);
+    const revision = database.revision(handoff.revisionId);
+    if (revision === undefined) {
+      throw new Error(`Switch ${handoff.id} references a missing revision.`);
+    }
+    const context = renderContext(
+      compileContext(database.eventsForSessionThrough(revision.sessionId, revision.eventHighWaterMark)),
+      true,
+    );
+    output.write(`Ghost handoff for ${targetAgent}\nRevision: ${revision.id}\nWorkspace snapshot: ${revision.workspaceSnapshotId}\n\n${context}\n`);
+  } finally {
     database.close();
   }
 }
@@ -269,6 +363,27 @@ async function claudeHook(): Promise<void> {
   }
 }
 
+async function geminiHook(): Promise<void> {
+  const contents = await readIngestInput(undefined);
+  let rawEvent: unknown;
+  try {
+    rawEvent = JSON.parse(contents) as unknown;
+  } catch {
+    throw new Error('Gemini hook input is not valid JSON.');
+  }
+  if (typeof rawEvent !== 'object' || rawEvent === null || Array.isArray(rawEvent)) {
+    throw new Error('Gemini hook input must be a JSON object.');
+  }
+  const database = await GhostDatabase.open(databasePath());
+  try {
+    for (const event of new GeminiSourceAdapter().normalize(rawEvent as Record<string, unknown>)) {
+      database.append(event);
+    }
+  } finally {
+    database.close();
+  }
+}
+
 async function setup(): Promise<void> {
   const database = await GhostDatabase.open(databasePath());
   database.close();
@@ -298,6 +413,18 @@ async function main(): Promise<void> {
     case 'ask':
       await ask(arguments_);
       return;
+    case 'compare':
+      await compare(arguments_);
+      return;
+    case 'copy':
+      await copy(arguments_);
+      return;
+    case 'merge':
+      await merge(arguments_);
+      return;
+    case 'switch':
+      await switchAgent(arguments_);
+      return;
     case 'providers':
       await providers(arguments_);
       return;
@@ -309,6 +436,9 @@ async function main(): Promise<void> {
       return;
     case 'claude-hook':
       await claudeHook();
+      return;
+    case 'gemini-hook':
+      await geminiHook();
       return;
     case '--help':
     case '-h':
