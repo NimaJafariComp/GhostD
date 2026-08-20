@@ -31,6 +31,7 @@ import { QuestionService, resolveQuestionProvider, resolveQuestionSession } from
 import { ComparisonService } from '../reasoning/service.js';
 import { WriteBranchService } from '../write/service.js';
 import { serveMcp } from '../mcp/server.js';
+import { describeSessionChoice, resolveSessionChoice, sessionChoices } from './session-selector.js';
 
 function databasePath(): string {
   return process.env['GHOST_DB_PATH'] ?? join(homedir(), '.ghost', 'ghost.db');
@@ -43,7 +44,7 @@ function selectedSessionId(database: GhostDatabase): string | undefined {
 function requiredSelectedSessionId(database: GhostDatabase): string {
   const sessionId = selectedSessionId(database);
   if (sessionId === undefined) {
-    throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
+    throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <number>.');
   }
   return sessionId;
 }
@@ -110,7 +111,8 @@ function usage(): string {
                             Remove only GhostD's exact project hook command.
   ghost session list         List captured sessions in the current workspace.
   ghost session status       Show the selected and automatically resolvable session.
-  ghost session use <id>     Explicitly select a captured session for this workspace.
+  ghost session use <number|id>
+                            Explicitly select a numbered captured session for this workspace.
   ghost codex-hook           Receive a Codex hook event on standard input.
   ghost claude-hook          Receive a Claude hook event on standard input.
   ghost gemini-hook          Receive a Gemini hook event on standard input.
@@ -333,7 +335,7 @@ async function context(arguments_: string[]): Promise<void> {
   try {
     const resolvedSessionId = sessionId ?? selectedSessionId(database);
     if (resolvedSessionId === undefined) {
-      throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
+      throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <number>.');
     }
     const events = database.eventsForSession(resolvedSessionId);
     if (events.length === 0) {
@@ -752,34 +754,41 @@ async function session(arguments_: string[]): Promise<void> {
       case 'list': {
         if (arguments_.length !== 1) throw new Error('Usage: ghost session list.');
         const selected = database.activeSession(workspace)?.id;
-        const sessions = database.sessions(workspace);
-        if (sessions.length === 0) {
+        const choices = sessionChoices(database, workspace);
+        if (choices.length === 0) {
           output.write(`No captured sessions in ${workspace}. Enable a supported host with ghost setup <host> --approve.\n`);
           return;
         }
-        for (const captured of sessions) {
-          const state = captured.endedAt === undefined ? 'open' : `ended ${captured.endedAt}`;
-          const selectedMarker = captured.id === selected ? ' selected' : '';
-          output.write(`${captured.id}  ${captured.source}:${captured.sourceSessionId}  ${state}${selectedMarker}\n`);
+        for (const choice of choices) {
+          const selectedMarker = choice.session.id === selected ? ' selected' : '';
+          output.write(`${describeSessionChoice(choice)}${selectedMarker}\n`);
         }
+        output.write('Use ghost session use <number> to select one. Full Ghost session IDs remain supported for scripts.\n');
         return;
       }
       case 'status': {
         if (arguments_.length !== 1) throw new Error('Usage: ghost session status.');
         const selected = database.activeSession(workspace);
         const resolved = database.resolvedSession(workspace);
-        const candidates = database.sessions(workspace).filter(({ endedAt }) => endedAt === undefined);
+        const choices = sessionChoices(database, workspace);
+        const description = (captured: typeof selected): string => {
+          if (captured === undefined) return 'none';
+          const choice = choices.find(({ session: candidate }) => candidate.id === captured.id);
+          return choice === undefined ? `${captured.source} (session no longer listed)` : describeSessionChoice(choice);
+        };
+        const candidates = choices.filter(({ session: captured }) => captured.endedAt === undefined);
         output.write(`Workspace: ${workspace}\n`);
-        output.write(`Selected: ${selected === undefined ? 'none' : `${selected.id} (${selected.source}:${selected.sourceSessionId})`}\n`);
-        output.write(`Resolved: ${resolved === undefined ? 'none; select a session explicitly' : `${resolved.id} (${resolved.source}:${resolved.sourceSessionId})`}\n`);
+        output.write(`Selected: ${description(selected)}\n`);
+        output.write(`Resolved: ${resolved === undefined ? 'none; select a session explicitly' : description(resolved)}\n`);
         output.write(`Open captured sessions: ${candidates.length}\n`);
         return;
       }
       case 'use': {
-        const sessionId = arguments_.at(1);
-        if (sessionId === undefined || arguments_.length !== 2) throw new Error('Usage: ghost session use <id>.');
-        const selected = database.setActiveSession(workspace, sessionId);
-        output.write(`Selected ${selected.source}:${selected.sourceSessionId} for ${workspace}.\n`);
+        const selection = arguments_.at(1);
+        if (selection === undefined || arguments_.length !== 2) throw new Error('Usage: ghost session use <number|id>.');
+        const choice = resolveSessionChoice(sessionChoices(database, workspace), selection);
+        database.setActiveSession(workspace, choice.session.id);
+        output.write(`Selected ${describeSessionChoice(choice)} for ${workspace}.\n`);
         return;
       }
       default:
@@ -838,7 +847,7 @@ async function setup(arguments_: string[]): Promise<void> {
   output.write(`GhostD ${action} capture ${action === 'antigravity' ? 'plugin' : 'hook'} installed: ${hookPath}\n`);
   output.write(action === 'codex'
     ? 'Approve this project in Codex before its hooks can run.\n'
-    : `GhostD captures only documented ${availability.displayName} hook events. Use ghost session list and ghost session use <id> to control the active session.\n`);
+    : `GhostD captures only documented ${availability.displayName} hook events. Use ghost session list and ghost session use <number> to control the active session.\n`);
 }
 
 async function main(): Promise<void> {

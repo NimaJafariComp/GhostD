@@ -23,9 +23,9 @@ export function resolveQuestionSession(database: GhostDatabase, workspaceCwd: st
   }
   const openSessionCount = database.sessions(workspaceCwd).filter(({ endedAt }) => endedAt === undefined).length;
   if (openSessionCount > 1) {
-    throw new Error('Multiple open Ghost sessions are captured for this workspace. Run ghost session list, then ghost session use <id>.');
+    throw new Error('Multiple open Ghost sessions are captured for this workspace. Run ghost session list, then ghost session use <number>.');
   }
-  throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <id>.');
+  throw new Error('No active Ghost session is resolved for this workspace. Run ghost session list, then ghost session use <number>.');
 }
 
 /** Resolves the selected host's provider for the unqualified `ghost "…"` experience. */
