@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import { npmCommand } from './npm-command.mjs';
+
 const [outputDirectory] = process.argv.slice(2);
 if (outputDirectory === undefined || process.argv.length !== 3) {
   throw new Error('Usage: npm run release:vsix -- <output-directory>.');
@@ -15,7 +17,7 @@ if (typeof rootPackage.version !== 'string' || rootPackage.version !== extension
 }
 const filename = `ghostd-vscode-${rootPackage.version}.vsix`;
 await mkdir(destination, { recursive: true });
-execFileSync('npm', ['run', 'build', '--workspace', 'ghostd-vscode'], { stdio: 'inherit' });
+execFileSync(npmCommand, ['run', 'build', '--workspace', 'ghostd-vscode'], { stdio: 'inherit' });
 const stagingDirectory = await mkdtemp(join(tmpdir(), 'ghostd-vsix-'));
 const extensionDirectory = join(stagingDirectory, 'extension');
 try {

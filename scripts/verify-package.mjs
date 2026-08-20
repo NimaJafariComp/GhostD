@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 
+import { npmCommand } from './npm-command.mjs';
+
 const requiredPaths = [
   'package.json',
   'README.md',
@@ -13,7 +15,7 @@ const requiredPaths = [
 ];
 const forbiddenPrefixes = ['src/', 'tests/', 'extensions/', 'docs/', '.github/'];
 
-const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' });
+const output = execFileSync(npmCommand, ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' });
 const packages = JSON.parse(output);
 if (!Array.isArray(packages) || packages.length !== 1 || typeof packages[0] !== 'object' || packages[0] === null) {
   throw new Error('npm pack did not return one package manifest.');
