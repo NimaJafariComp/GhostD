@@ -23,7 +23,7 @@ export interface AskClaudeResult {
 
 export class MaterializationFailureError extends Error {
   public constructor(public readonly run: MaterializationRun) {
-    super(`Claude materialization failed (${run.failureCode ?? 'provider_error'}). ${run.recovery}`);
+    super(`${providerLabel(run.provider)} materialization failed (${run.failureCode ?? 'provider_error'}). ${run.recovery}`);
   }
 }
 
@@ -167,4 +167,8 @@ function configuredPrice(name: string): number | undefined {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function providerLabel(provider: string): string {
+  return provider.length === 0 ? 'Provider' : `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`;
 }

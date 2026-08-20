@@ -6,11 +6,16 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 // Use the model Google currently directs new Gemini API projects to.
 const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 const DEFAULT_MAX_TOKENS = 1024;
+const geminiThinkingLevels = ['minimal', 'low', 'medium', 'high'] as const;
+const DEFAULT_GEMINI_THINKING_LEVEL = 'minimal';
+
+type GeminiThinkingLevel = (typeof geminiThinkingLevels)[number];
 
 export interface GeminiTargetOptions {
   apiKey?: string;
   model?: string;
   maxTokens?: number;
+  thinkingLevel?: GeminiThinkingLevel;
   fetchImpl?: typeof fetch;
 }
 
@@ -37,12 +42,14 @@ export class GeminiTargetAdapter implements ContextTargetAdapter {
   private readonly apiKey: string | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly maxTokens: number;
+  private readonly thinkingLevel: GeminiThinkingLevel;
   public readonly model: string;
 
   public constructor(options: GeminiTargetOptions = {}) {
     this.apiKey = options.apiKey ?? process.env['GEMINI_API_KEY'] ?? process.env['GOOGLE_API_KEY'];
     this.model = options.model ?? process.env['GHOST_GEMINI_MODEL'] ?? DEFAULT_GEMINI_MODEL;
     this.maxTokens = options.maxTokens ?? configuredMaxTokens();
+    this.thinkingLevel = options.thinkingLevel ?? configuredThinkingLevel();
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -61,6 +68,7 @@ export class GeminiTargetAdapter implements ContextTargetAdapter {
         contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
         generationConfig: {
           maxOutputTokens: this.maxTokens,
+          thinkingConfig: { thinkingLevel: this.thinkingLevel },
           ...(request.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
         },
       }),
@@ -79,6 +87,17 @@ function configuredMaxTokens(): number {
   }
   const value = Number.parseInt(configured, 10);
   return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MAX_TOKENS;
+}
+
+function configuredThinkingLevel(): GeminiThinkingLevel {
+  const configured = process.env['GHOST_GEMINI_THINKING_LEVEL'];
+  return configured !== undefined && isGeminiThinkingLevel(configured)
+    ? configured
+    : DEFAULT_GEMINI_THINKING_LEVEL;
+}
+
+function isGeminiThinkingLevel(value: string): value is GeminiThinkingLevel {
+  return geminiThinkingLevels.some((level) => level === value);
 }
 
 function parseGeminiResponse(value: unknown, fallbackModel: string): TargetResult {

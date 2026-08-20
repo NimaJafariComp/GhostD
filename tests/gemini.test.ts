@@ -40,7 +40,10 @@ describe('GeminiTargetAdapter', () => {
     expect(body).toMatchObject({
       systemInstruction: { parts: [{ text: 'Read only.' }] },
       contents: [{ role: 'user', parts: [{ text: 'Explain.' }] }],
-      generationConfig: { responseMimeType: 'application/json' },
+      generationConfig: {
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: 'minimal' },
+      },
     });
     expect(body).not.toHaveProperty('tools');
     expect(result).toEqual({

@@ -78,7 +78,7 @@ GhostD is a local-first universal agent context runtime. It owns a canonical, im
 
 **Status:** Implementation complete — live Gemini validation must be rerun after updating the default model retired for new Google API projects; it requires a user-configured `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 
-- [x] Add Gemini source/target adapters and frozen-revision `ghost compare` runs. Gemini defaults to `gemini-3.6-flash`, uses a stateless, read-only `generateContent` request, and never sends tools, workspace access, or hidden-session continuation.
+- [x] Add Gemini source/target adapters and frozen-revision `ghost compare` runs. Gemini defaults to `gemini-3.6-flash` with minimal thinking (configurable by `GHOST_GEMINI_THINKING_LEVEL`), uses a stateless, read-only `generateContent` request, and never sends tools, workspace access, or hidden-session continuation.
 - [x] Add structured insights that separate findings, evidence, and recommendations. Evidence is persisted only when every cited canonical event ID exists in the exact frozen comparison revision.
 - [x] Add explicit merge/copy flows. Copies share the source revision without duplicating events; merges are audited, same-session fast-forwards and never infer conflict resolution. Promotion into a branch named `main` is therefore always an explicit `ghost merge` action.
 - [x] Add `ghost switch <agent>` for intentional cross-agent continuation. It records the switch and renders a provenance-bearing handoff at the branch's exact revision without materializing or assuming provider state.
