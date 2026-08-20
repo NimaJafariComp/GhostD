@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "private": true,
   "publisher": "ghostd",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/NimaJafariComp/GhostD"
@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "extensionKind": [
     "workspace"

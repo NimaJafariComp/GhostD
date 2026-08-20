@@ -4,6 +4,7 @@ const requiredPaths = [
   'package.json',
   'README.md',
   'LICENSE',
+  'NOTICE',
   'dist/cli/main.js',
   'dist/index.js',
   'integrations/claude/ghostd/hooks/hooks.json',

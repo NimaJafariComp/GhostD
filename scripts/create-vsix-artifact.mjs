@@ -22,7 +22,8 @@ try {
   await mkdir(extensionDirectory);
   await Promise.all([
     cp('extensions/vscode/dist', join(extensionDirectory, 'dist'), { recursive: true }),
-    copyFile('extensions/vscode/LICENSE', join(extensionDirectory, 'LICENSE')),
+    copyFile('LICENSE', join(extensionDirectory, 'LICENSE')),
+    copyFile('NOTICE', join(extensionDirectory, 'NOTICE')),
     copyFile('extensions/vscode/README.md', join(extensionDirectory, 'README.md')),
     copyFile('extensions/vscode/package.json', join(extensionDirectory, 'package.json')),
   ]);

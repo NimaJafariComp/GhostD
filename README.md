@@ -5,7 +5,7 @@
 [![Release verification](https://github.com/NimaJafariComp/GhostD/actions/workflows/release-verify.yml/badge.svg)](https://github.com/NimaJafariComp/GhostD/actions/workflows/release-verify.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.5.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 GhostD is a local-first runtime that captures **documented** agent lifecycle events, compiles a redacted canonical context ledger, and lets you ask a revision-pinned sidecar question without cluttering or mutating the original Codex, Claude, or Gemini conversation.
 
@@ -371,6 +371,6 @@ ghost hosts
 
 ## License and status
 
-GhostD is currently **UNLICENSED** and the repository is private. It is not published to the npm registry or a Homebrew tap. The GitHub Release workflow is ready to distribute versioned private release assets after a matching tag is pushed.
+GhostD is licensed under [Apache-2.0](LICENSE) and the repository is currently private. It is not published to the npm registry or a Homebrew tap. The GitHub Release workflow is ready to distribute versioned private release assets after a matching tag is pushed.
 
-Before a public npm package, Homebrew tap, Marketplace listing, or external redistribution, publish an explicit license and complete the relevant host and release gates. See [LICENSE](LICENSE) and [the release guide](docs/releasing.md).
+Before a public npm package, Homebrew tap, or Marketplace listing, complete the relevant host and release gates. See [NOTICE](NOTICE) and [the release guide](docs/releasing.md).

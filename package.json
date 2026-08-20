@@ -2,7 +2,7 @@
   "name": "ghostd",
   "version": "0.1.0",
   "description": "Local-first, revision-pinned context for developer agents.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/NimaJafariComp/GhostD",
   "repository": {
     "type": "git",
@@ -43,7 +43,8 @@
     "dist",
     "integrations",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "publishConfig": {
     "access": "public"

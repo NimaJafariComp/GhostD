@@ -1,4 +1,11 @@
-Copyright (c) GhostD contributors.
+GhostD VS Code extension
+Copyright 2026 Nima Jafari
 
-All rights reserved. This extension is not licensed for redistribution until a
-public GhostD release and license are explicitly published.
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this extension except in compliance with the License. You may obtain a copy
+of the License at:
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+The complete Apache License 2.0 text is included in the repository-root
+LICENSE file and in every packaged GhostD VSIX release artifact.

@@ -4,10 +4,10 @@
 
 The intended channels are npm for every supported Node platform and a dedicated
 Homebrew tap for macOS and Linux. Homebrew Core is deliberately out of scope
-until GhostD is public, licensed for redistribution, stable, and meets
+until GhostD is public, stable, and meets
 Homebrew's formula requirements.
 
-The current repository is `UNLICENSED` and no npm registry package or Homebrew
+GhostD is licensed under Apache-2.0, but no npm registry package or Homebrew
 tap has been published. GitHub Releases are available as a private-repository
 distribution channel once a matching version tag is pushed. The commands below
 are release-operator procedures, not end-user installation claims.
